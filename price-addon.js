@@ -22,6 +22,22 @@ function addPriceInput(form) {
   form.insertBefore(label, sticky || null);
 }
 
+function simplifyCarrierDashboard() {
+  const dashboard = document.querySelector('.dashboard');
+  const actionTitle = dashboard?.querySelector('.action-row b')?.textContent || '';
+  if (!dashboard || !actionTitle.includes('매칭')) return;
+  dashboard.classList.add('carrier-dashboard');
+  const heading = dashboard.querySelector('.mine-list')?.previousElementSibling;
+  dashboard.querySelector('.mine-list')?.remove();
+  heading?.remove();
+  if (!dashboard.querySelector('.carrier-guide')) {
+    const guide = document.createElement('p');
+    guide.className = 'carrier-guide';
+    guide.textContent = '보유한 공컨테이너 조건을 등록하고, 주변의 실제 요청을 바로 찾아보세요.';
+    dashboard.querySelector('.action-row')?.before(guide);
+  }
+}
+
 async function showPrices() {
   for (const card of document.querySelectorAll('.match-card[data-id]')) {
     if (card.querySelector('.match-price')) continue;
@@ -84,8 +100,10 @@ document.addEventListener('submit', async (event) => {
 
 new MutationObserver(() => {
   addPriceInput(document.querySelector('#requestForm'));
+  simplifyCarrierDashboard();
   showPrices();
 }).observe(document.documentElement, { childList: true, subtree: true });
 
 addPriceInput(document.querySelector('#requestForm'));
+simplifyCarrierDashboard();
 showPrices();
