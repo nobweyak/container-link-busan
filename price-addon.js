@@ -20,6 +20,8 @@ function addPriceInput(form) {
   label.innerHTML = '희망 매칭 가격 (원)<input id="price" inputmode="numeric" type="number" min="0" step="1000" placeholder="예: 80000" required><small>예상 운송·인수 비용을 입력해 주세요.</small>';
   const sticky = form.querySelector('.sticky');
   form.insertBefore(label, sticky || null);
+  const submit = sticky?.querySelector('button');
+  if (submit) submit.textContent = '희망 가격 포함 요청 등록';
 }
 
 function keepOnePriceInput() {
@@ -98,7 +100,8 @@ document.addEventListener('submit', async (event) => {
       quantity: form.querySelector('#quantity').value,
       price, status: 'open', createdAt: serverTimestamp()
     });
-    form.innerHTML = '<div class="price-success"><b>✓ 요청이 등록되었습니다</b><p>희망 가격을 포함해 운반자에게 매칭 요청을 보냈습니다.</p></div>';
+    form.innerHTML = '<div class="price-success"><b>✓ 요청이 등록되었습니다</b><p>희망 가격을 포함해 운반자에게 매칭 요청을 보냈습니다.</p><button class="button main" id="goRequestList" type="button">요청 내역으로 이동</button></div>';
+    form.querySelector('#goRequestList').onclick = () => document.querySelector('#home')?.click();
   } catch (error) {
     console.error(error);
     form.dataset.priceHandled = '';
