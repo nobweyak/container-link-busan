@@ -14,7 +14,7 @@ async function userId() {
 }
 
 function addPriceInput(form) {
-  if (!form || form.querySelector('#price')) return;
+  if (!form || form.dataset.priceComplete === 'true' || form.querySelector('#price')) return;
   const label = document.createElement('label');
   label.className = 'price-field';
   label.innerHTML = '희망 매칭 가격 (원)<input id="price" inputmode="numeric" type="number" min="0" step="1000" placeholder="예: 80000" required><small>예상 운송·인수 비용을 입력해 주세요.</small>';
@@ -100,6 +100,7 @@ document.addEventListener('submit', async (event) => {
       quantity: form.querySelector('#quantity').value,
       price, status: 'open', createdAt: serverTimestamp()
     });
+    form.dataset.priceComplete = 'true';
     form.innerHTML = '<div class="price-success"><b>✓ 요청이 등록되었습니다</b><p>희망 가격을 포함해 운반자에게 매칭 요청을 보냈습니다.</p><button class="button main" id="goRequestList" type="button">요청 내역으로 이동</button></div>';
     form.querySelector('#goRequestList').onclick = () => document.querySelector('#home')?.click();
   } catch (error) {
