@@ -22,6 +22,14 @@ function addPriceInput(form) {
   form.insertBefore(label, sticky || null);
 }
 
+function keepOnePriceInput() {
+  document.querySelectorAll('.form-view:not(#requestForm) .price-field, .form-view:not(#requestForm) [name="price"], .form-view:not(#requestForm) #price').forEach((element) => element.closest('.price-field')?.remove() || element.remove());
+  const form = document.querySelector('#requestForm');
+  if (!form) return;
+  const fields = form.querySelectorAll('.price-field');
+  fields.forEach((field, index) => { if (index > 0) field.remove(); });
+}
+
 function simplifyCarrierDashboard() {
   const dashboard = document.querySelector('.dashboard');
   const actionTitle = dashboard?.querySelector('.action-row b')?.textContent || '';
@@ -100,10 +108,12 @@ document.addEventListener('submit', async (event) => {
 
 new MutationObserver(() => {
   addPriceInput(document.querySelector('#requestForm'));
+  keepOnePriceInput();
   simplifyCarrierDashboard();
   showPrices();
 }).observe(document.documentElement, { childList: true, subtree: true });
 
 addPriceInput(document.querySelector('#requestForm'));
+keepOnePriceInput();
 simplifyCarrierDashboard();
 showPrices();
