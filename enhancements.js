@@ -37,6 +37,7 @@ function applyDemoRole() {
   const choice = document.querySelector(id);
   if (choice) {
     const next = choice;
+    localStorage.setItem('container-link-role', demoRole);
     demoRole = '';
     next.click();
   }

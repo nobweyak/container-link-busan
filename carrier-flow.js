@@ -37,6 +37,7 @@ document.addEventListener('click', (event) => {
   const button = event.target.closest?.('button');
   if (button?.id === 'carrier') localStorage.setItem('container-link-role', 'carrier');
   if (button?.id === 'requester') localStorage.setItem('container-link-role', 'requester');
+  if (button?.id === 'requestMatch' || button?.id === 'sendReport') localStorage.setItem('container-link-role', 'carrier');
   if (button?.classList.contains('match-card')) rememberCarrierTrip(button);
 }, true);
 
