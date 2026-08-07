@@ -35,6 +35,7 @@ function stateName(status) { return ({ open: '매칭 대기', approval: '승인 
 function requestCard(item) { return `<article class="mini-card"><div><b>${item.size || ''} ${item.type || ''}</b><span>${item.pickup || ''} → ${item.returnPlace || ''}</span></div><em class="state ${item.status || 'open'}">${stateName(item.status)}</em></article>`; }
 async function dashboard() {
   const rows = await mine();
+  if(state.role==='requester'){const rank={confirmed:0,approval:1,review:1,open:2};rows.sort((a,b)=>(rank[a.status]??9)-(rank[b.status]??9));}
   root.innerHTML = `<section class="dashboard"><div class="top"><div><p class="eyebrow">${state.role === 'carrier' ? '공컨테이너 운반자' : '컨테이너 필요자'}</p><h1>안녕하세요,<br>김기사님</h1></div><button id="switch">역할 변경</button></div><div class="hero"><span>오늘의 공차 절감 예상</span><b>12.4 <small>km</small></b><p>추천 매칭을 통해 줄일 수 있는 이동거리</p></div><h2>진행 중인 매칭과 운송</h2><div class="mine-list">${rows.length ? rows.map(requestCard).join('') : '<div class="empty">아직 진행 중인 요청이 없습니다.</div>'}</div><button class="action-row" id="action"><span>▣</span><div><b>${state.role === 'carrier' ? '매칭 찾기' : '공컨테이너 요청 등록'}</b><small>${state.role === 'carrier' ? '선택한 조건으로 요청을 검색합니다' : '필요한 컨테이너 조건을 등록합니다'}</small></div><em>›</em></button></section>`;
   document.querySelector('#switch').onclick = roleSelect;
   document.querySelector('#action').onclick = () => spec(state.role);
