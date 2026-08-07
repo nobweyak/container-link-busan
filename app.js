@@ -30,7 +30,7 @@ function roleSelect() {
   document.querySelector('#requester').onclick = () => { state.role = 'requester'; localStorage.setItem('container-link-role', 'requester'); dashboard(); };
 }
 
-async function mine() { if (!await connect()) return []; try { const rows = await getDocs(query(collection(db, 'containerRequests'), where('ownerId', '==', state.user.uid))); return rows.docs.map((row) => ({ id: row.id, ...row.data() })); } catch { return []; } }
+async function mine() { if (!await connect()) return []; try { const activeAccount=sessionStorage.getItem('container-link-active-account')||''; const rows = await getDocs(collection(db, 'containerRequests')); return rows.docs.map((row) => ({ id: row.id, ...row.data() })).filter((item)=>item.requesterAccount===activeAccount); } catch { return []; } }
 function stateName(status) { return ({ open: '매칭 대기', approval: '승인 대기', confirmed: '매칭 확정', rejected: '거절됨' })[status] || '진행 중'; }
 function requestCard(item) { return `<article class="mini-card"><div><b>${item.size || ''} ${item.type || ''}</b><span>${item.pickup || ''} → ${item.returnPlace || ''}</span></div><em class="state ${item.status || 'open'}">${stateName(item.status)}</em></article>`; }
 async function dashboard() {
