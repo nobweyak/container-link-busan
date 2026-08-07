@@ -3,7 +3,7 @@ import { getFirestore,collection,getDocs,updateDoc,doc } from 'https://www.gstat
 import { firebaseConfig } from './firebase-config.js';
 const db=getFirestore(getApps()[0]||initializeApp(firebaseConfig));
 async function approvals(){
- const dash=document.querySelector('.dashboard');if(!dash||dash.querySelector('.incoming-approvals')||dash.textContent.includes('공컨테이너 운반자'))return;
+ const dash=document.querySelector('.dashboard');if(!dash||dash.querySelector('.incoming-approvals')||localStorage.getItem('container-link-role')!=='requester')return;
  const email=sessionStorage.getItem('container-link-active-account')||'';const s=await getDocs(collection(db,'containerRequests'));
  const rows=s.docs.map(x=>Object.assign({id:x.id},x.data())).filter(x=>x.requesterAccount===email&&(x.status==='review'||x.status==='approval'));if(!rows.length)return;
  const box=document.createElement('section');box.className='incoming-approvals';box.innerHTML='<h2>승인 요청</h2>'+rows.map(x=>'<button class="approval-card '+(x.inspectionPhoto?'ready':'waiting')+'" data-id="'+x.id+'"><img src="'+(x.inspectionPhoto||'')+'"><span><b>'+x.size+' '+x.type+'</b><small>'+x.pickup+' → '+x.returnPlace+'</small><em>'+ (x.inspectionPhoto?'사진 확인 후 결정':'운반자 검수 사진 전송 대기') +'</em></span>›</button>').join('');
