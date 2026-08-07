@@ -102,6 +102,11 @@ document.addEventListener('submit', async (event) => {
       requesterAccount: sessionStorage.getItem('container-link-active-account') || 'requester-demo@containerlink.kr',
       pickup: form.querySelector('#pickup').value.trim(),
       returnPlace: form.querySelector('#returnPlace').value.trim(),
+      routeDistance: Number(form.dataset.routeDistance || 0),
+      pickupLatitude: form.querySelector('#pickup').dataset.latitude || '',
+      pickupLongitude: form.querySelector('#pickup').dataset.longitude || '',
+      returnLatitude: form.querySelector('#returnPlace').dataset.latitude || '',
+      returnLongitude: form.querySelector('#returnPlace').dataset.longitude || '',
       time: form.querySelector('#time').value,
       quantity: form.querySelector('#quantity').value,
       price, status: 'open', createdAt: serverTimestamp()
