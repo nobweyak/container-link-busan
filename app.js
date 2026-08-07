@@ -27,7 +27,7 @@ function signup(){root.innerHTML=header('회원가입',login)+'<section class="f
 function roleSelect() {
   root.innerHTML = `<section class="role-view"><div class="logo"><span>▣</span> CONTAINER LINK</div><div class="progress"><i></i><i class="on"></i><i></i></div><p class="eyebrow">업무 선택</p><h1>어떤 업무를<br>하시나요?</h1><button class="role-card carrier" id="carrier"><span class="role-icon">▣</span><b>공컨테이너 운반자</b><em>›</em></button><button class="role-card requester" id="requester"><span class="role-icon">⌁</span><b>컨테이너가 필요해요</b><em>›</em></button></section>`;
   document.querySelector('#carrier').onclick = () => { state.role = 'carrier'; localStorage.setItem('container-link-role', 'carrier'); dashboard(); };
-  document.querySelector('#requester').onclick = () => { state.role = 'requester'; localStorage.setItem('container-link-role', 'requester'); dashboard(); };
+  document.querySelector('#requester').onclick = () => { if(sessionStorage.getItem('container-link-active-account')==='demo@containerlink.kr')sessionStorage.setItem('container-link-active-account','requester-demo@containerlink.kr'); state.role = 'requester'; localStorage.setItem('container-link-role', 'requester'); dashboard(); };
 }
 
 async function mine() { if (!await connect()) return []; try { const activeAccount=sessionStorage.getItem('container-link-active-account')||''; const rows = await getDocs(collection(db, 'containerRequests')); return rows.docs.map((row) => ({ id: row.id, ...row.data() })).filter((item)=>item.requesterAccount===activeAccount); } catch { return []; } }
