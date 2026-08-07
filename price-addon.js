@@ -28,6 +28,11 @@ function keepOnePriceInput() {
   document.querySelectorAll('.form-view:not(#requestForm) .price-field, .form-view:not(#requestForm) [name="price"], .form-view:not(#requestForm) #price').forEach((element) => element.closest('.price-field')?.remove() || element.remove());
   const form = document.querySelector('#requestForm');
   if (!form) return;
+  if (form.querySelector('.price-success')) {
+    form.dataset.priceComplete = 'true';
+    form.querySelectorAll('.price-field, #price, [name="price"]').forEach((element) => element.closest('.price-field')?.remove() || element.remove());
+    return;
+  }
   const fields = form.querySelectorAll('.price-field');
   fields.forEach((field, index) => { if (index > 0) field.remove(); });
 }
