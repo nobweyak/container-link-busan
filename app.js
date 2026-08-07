@@ -2,7 +2,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.10.0/fireba
 import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
 import {
   getFirestore, collection, addDoc, getDocs, query, where,
-  updateDoc, getDoc, onSnapshot, doc, serverTimestamp
+  updateDoc, getDoc, setDoc, onSnapshot, doc, serverTimestamp
 } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
 
@@ -26,6 +26,7 @@ let connectionPromise = null;
 let toastTimer = null;
 let stopLocationRequestListener = null;
 let lastHandledLocationRequest = '';
+let tmapKeyPromise = null;
 
 const account = () => sessionStorage.getItem('container-link-active-account') || '';
 function accountName() {
@@ -56,10 +57,10 @@ const waitLimit = (promise, milliseconds = 9000) => Promise.race([
 
 async function connect() {
   if (state.user) return true;
-  if (auth.currentUser) { state.user = auth.currentUser; return true; }
+  if (auth.currentUser) { state.user = auth.currentUser; resolveTmapAppKey(); return true; }
   if (connectionPromise) return connectionPromise;
   connectionPromise = signInAnonymously(auth)
-    .then(({ user }) => { state.user = user; return true; })
+    .then(({ user }) => { state.user = user; resolveTmapAppKey(); return true; })
     .catch((error) => { console.error(error); say('Firebase 연결에 실패했습니다. 인터넷 연결을 확인해 주세요.'); return false; })
     .finally(() => { connectionPromise = null; });
   return connectionPromise;
@@ -188,13 +189,11 @@ async function dashboard() {
     <div class="hero"><span>CONNEXT</span><b>${visibleRows.length}<small> 건</small></b><p>${state.role === 'carrier' ? '내가 진행 중인 운송' : '내가 등록한 요청과 승인 현황'}</p></div>
     <div class="section-heading"><h2>${state.role === 'carrier' ? '진행 중 운송' : '내 요청 목록'}</h2><button type="button" id="refresh">새로고침</button></div>
     <div class="mine-list">${visibleRows.length ? visibleRows.map(dashboardCard).join('') : '<div class="empty">현재 표시할 거래가 없습니다.</div>'}</div>
-    ${state.role === 'requester' ? '<button type="button" class="tmap-setup-row" id="tmapSetup"><span>TMAP</span><div><b>경로 API 연동 설정</b><small>appKey를 이 브라우저에 안전하게 저장</small></div><em>›</em></button>' : ''}
     <button class="action-row" id="action"><span>＋</span><div><b>${state.role === 'carrier' ? '매칭 찾기' : '공컨테이너 요청 등록'}</b></div><em>›</em></button>
   </section>`;
   document.querySelector('#switch').onclick = roleSelect;
   document.querySelector('#refresh').onclick = dashboard;
   document.querySelector('#action').onclick = () => spec(state.role);
-  document.querySelector('#tmapSetup')?.addEventListener('click', openTmapKeyDialog);
   document.querySelectorAll('[data-dashboard-id]').forEach((button) => {
     button.onclick = () => {
       const item = visibleRows.find((row) => row.id === button.dataset.dashboardId);
@@ -490,23 +489,34 @@ function transportTracking(item) {
   else requesterLocationScreen(item);
 }
 
-function openTmapKeyDialog() {
-  document.querySelector('.tmap-key-modal')?.remove();
-  const modal = document.createElement('div');
-  modal.className = 'address-modal tmap-key-modal';
-  modal.innerHTML = `<section role="dialog" aria-modal="true" aria-label="TMAP API 연동 설정"><header><b>TMAP API 연동 설정</b><button type="button" id="closeTmapSettings">×</button></header><div class="tmap-key-body"><p>발급받은 appKey를 입력하세요. 키는 현재 브라우저의 저장 공간에만 보관되며 GitHub와 Firebase에는 저장되지 않습니다.</p><label>TMAP appKey<input id="globalTmapKey" type="password" autocomplete="off" placeholder="appKey 입력"></label><button type="button" class="button main" id="saveGlobalTmapKey">키 저장</button><small>자동차 경로안내 API와 JavaScript 지도 상품이 활성화된 키가 필요합니다.</small></div></section>`;
-  document.body.append(modal);
-  modal.querySelector('#globalTmapKey').value = localStorage.getItem('connext-tmap-app-key') || '';
-  const close = () => modal.remove();
-  modal.querySelector('#closeTmapSettings').onclick = close;
-  modal.onclick = (event) => { if (event.target === modal) close(); };
-  modal.querySelector('#saveGlobalTmapKey').onclick = () => {
-    const key = modal.querySelector('#globalTmapKey').value.trim();
-    if (!key) return say('TMAP appKey를 입력해 주세요.');
-    localStorage.setItem('connext-tmap-app-key', key);
-    say('TMAP 키를 이 브라우저에 저장했습니다.');
-    close();
-  };
+async function resolveTmapAppKey() {
+  if (tmapKeyPromise) return tmapKeyPromise;
+  tmapKeyPromise = (async () => {
+    const savedKey = (localStorage.getItem('connext-tmap-app-key') || '').trim();
+    if (savedKey) {
+      try {
+        await waitLimit(setDoc(doc(db, 'containerRequests', '_appConfigTmap'), {
+          appKey: savedKey,
+          updatedAt: new Date().toISOString()
+        }, { merge: true }), 6000);
+      } catch (error) {
+        console.warn('기존 TMAP 키 공통 설정 이전 실패', error);
+      }
+      return savedKey;
+    }
+    try {
+      const snapshot = await waitLimit(getDoc(doc(db, 'containerRequests', '_appConfigTmap')), 7000);
+      const sharedKey = String(snapshot.data()?.appKey || '').trim();
+      if (sharedKey) localStorage.setItem('connext-tmap-app-key', sharedKey);
+      return sharedKey;
+    } catch (error) {
+      console.error('TMAP 공통 설정을 불러오지 못했습니다.', error);
+      return '';
+    }
+  })();
+  const key = await tmapKeyPromise;
+  if (!key) tmapKeyPromise = null;
+  return key;
 }
 
 function locationSummary(item) {
@@ -520,26 +530,24 @@ function requesterLocationScreen(item) {
   root.innerHTML = `${header('차량 위치 확인')}<section class="tracking-view">
     <div class="tracking-head"><span>운송 진행 중</span><b>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</b><small>${escapeHtml(item.size)} ${escapeHtml(item.type)}</small></div>
     ${locationSummary(item)}
-    <div id="tmapMap" class="tmap-map"><div class="map-placeholder"><b>TMAP 경로</b><small>${item.carrierLocation ? 'API 키를 설정하면 경로와 남은 시간이 표시됩니다.' : '운반자가 위치를 전송하면 경로를 계산할 수 있습니다.'}</small></div></div>
+    <div id="tmapMap" class="tmap-map"><div class="map-placeholder"><b>TMAP 경로</b><small>${item.carrierLocation ? '경로와 남은 시간을 자동으로 계산하고 있습니다.' : '운반자가 위치를 전송하면 경로를 자동 계산합니다.'}</small></div></div>
     <div id="routeSummary" class="route-summary hidden"></div>
     <button type="button" class="button main" id="requestLocation">운반자에게 최신 위치 요청</button>
     <button type="button" class="button ghost" id="refreshLocation">위치 정보 새로고침</button>
-    <details class="tmap-settings"><summary>TMAP API 키 설정</summary><p>키는 이 브라우저에만 저장되며 GitHub와 Firebase에는 전송하지 않습니다.</p><label>TMAP appKey<input id="tmapKey" type="password" autocomplete="off" placeholder="발급받은 appKey 입력"></label><button type="button" class="button ghost" id="saveTmapKey">이 브라우저에 키 저장</button></details>
     <p class="location-notice">차량 위치는 확정된 이 거래의 공컨테이너 수요자에게만 표시됩니다. 위치 요청만으로 운반자의 GPS에 강제 접근할 수 없으며 운반자의 동의와 브라우저 위치 권한이 필요합니다.</p>
   </section>`;
   bindHeader(dashboard);
-  const savedKey = localStorage.getItem('connext-tmap-app-key') || '';
-  document.querySelector('#tmapKey').value = savedKey;
   document.querySelector('#requestLocation').onclick = () => requestCarrierLocation(item);
   document.querySelector('#refreshLocation').onclick = () => refreshTrackingItem(item.id, requesterLocationScreen);
-  document.querySelector('#saveTmapKey').onclick = () => {
-    const key = document.querySelector('#tmapKey').value.trim();
-    if (!key) return say('TMAP appKey를 입력해 주세요.');
-    localStorage.setItem('connext-tmap-app-key', key);
-    say('TMAP 키를 이 브라우저에 저장했습니다.');
-    if (item.carrierLocation) renderTmapRoute(item, key);
-  };
-  if (savedKey && item.carrierLocation) renderTmapRoute(item, savedKey);
+  if (item.carrierLocation) {
+    resolveTmapAppKey().then((key) => {
+      if (key) renderTmapRoute(item, key);
+      else {
+        const mapBox = document.querySelector('#tmapMap');
+        if (mapBox) mapBox.innerHTML = '<div class="map-placeholder error"><b>경로 서비스 연결 준비 중</b><small>공통 TMAP 설정을 불러오지 못했습니다. 잠시 후 새로고침해 주세요.</small></div>';
+      }
+    });
+  }
 }
 
 async function requestCarrierLocation(item) {
