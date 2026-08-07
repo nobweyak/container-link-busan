@@ -4,8 +4,8 @@ import { firebaseConfig } from './firebase-config.js';
 const db=getFirestore(getApps()[0]||initializeApp(firebaseConfig));
 async function approvals(){
  const dash=document.querySelector('.dashboard');if(!dash||dash.querySelector('.incoming-approvals')||dash.textContent.includes('공컨테이너 운반자'))return;
- const email=sessionStorage.getItem('container-link-active-account')||'';const s=await getDocs(collection(db,'containerRequests'));
- const rows=s.docs.map(x=>Object.assign({id:x.id},x.data())).filter(x=>(x.requesterAccount===email||email==='demo@containerlink.kr')&&(x.status==='review'||x.status==='approval'));if(!rows.length)return;
+ const s=await getDocs(collection(db,'containerRequests'));
+ const rows=s.docs.map(x=>Object.assign({id:x.id},x.data())).filter(x=>x.status==='review'||x.status==='approval');if(!rows.length)return;
  const box=document.createElement('section');box.className='incoming-approvals';box.innerHTML='<h2>사진 확인이 필요한 승인 요청</h2>'+rows.map(x=>'<button class="approval-card" data-id="'+x.id+'"><img src="'+(x.inspectionPhoto||'')+'"><span><b>'+x.size+' '+x.type+'</b><small>'+x.pickup+' → '+x.returnPlace+'</small><em>사진 확인 후 결정</em></span>›</button>').join('');
  dash.querySelector('.action-row').before(box);box.querySelectorAll('.approval-card').forEach(b=>b.onclick=()=>{const item=rows.find(x=>x.id===b.dataset.id);if(!item.inspectionPhoto)return alert('운반자가 검수 사진을 전송하는 중입니다. 사진 전송 후 최종 결정을 할 수 있습니다.');review(item)});
 }
