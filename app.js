@@ -2,7 +2,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.10.0/fireba
 import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
 import {
   getFirestore, collection, addDoc, getDocs, query, where,
-  updateDoc, getDoc, setDoc, onSnapshot, doc, serverTimestamp
+  updateDoc, getDoc, setDoc, onSnapshot, doc, serverTimestamp, runTransaction
 } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
 
@@ -20,6 +20,7 @@ const state = {
   selected: null,
   photoData: '',
   photoName: '',
+  allocationQuantity: 1,
   hidden: new Set()
 };
 let connectionPromise = null;
@@ -165,9 +166,9 @@ async function loadForDashboard() {
 }
 
 const statusLabel = (status) => ({
-  open: '매칭 대기', approval: '승인 대기', review: '승인 요청 도착', reinspection: '재촬영 요청', confirmed: '매칭 확정', completed: '운반 완료', rejected: '매칭 반려'
+  open: '매칭 대기', filled: '모집 완료', approval: '승인 대기', review: '승인 요청 도착', reinspection: '재촬영 요청', confirmed: '매칭 확정', completed: '운반 완료', rejected: '매칭 반려'
 })[status] || '진행 중';
-const statusRank = { confirmed: 0, review: 1, reinspection: 2, approval: 3, open: 4, rejected: 5, completed: 6 };
+const statusRank = { confirmed: 0, review: 1, reinspection: 2, approval: 3, open: 4, filled: 5, rejected: 6, completed: 7 };
 const TRUST_BASE_TEMPERATURE = 36.5;
 const TRUST_RATINGS = {
   5: { label: '매우 만족', delta: 1.0 },
@@ -205,8 +206,12 @@ async function loadCarrierTrust(carrierAccount) {
 function dashboardCard(item) {
   const actionable = (state.role === 'requester' && ['approval', 'review'].includes(item.status)) || (state.role === 'carrier' && item.status === 'reinspection');
   const trackable = item.status === 'confirmed';
+  const totalQuantity = Number(item.totalQuantity || item.quantity || 1);
+  const quantityText = item.recordType === 'allocation'
+    ? `배정 ${Number(item.allocatedQuantity || item.quantity || 1)}대`
+    : `잔여 ${Number(item.remainingQuantity ?? totalQuantity)}대 / 총 ${totalQuantity}대`;
   return `<button type="button" class="mini-card ${actionable ? 'actionable' : ''} ${trackable ? 'trackable' : ''}" data-dashboard-id="${escapeHtml(item.id)}">
-    <div><b>${escapeHtml(item.size)} ${escapeHtml(item.type)}</b><span>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</span><small>${Number(item.price || 0).toLocaleString('ko-KR')}원</small></div>
+    <div><b>${escapeHtml(item.size)} ${escapeHtml(item.type)}</b><span>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</span><small>${quantityText} · 대당 ${Number(item.unitPrice || item.price || 0).toLocaleString('ko-KR')}원</small></div>
     <em class="state ${escapeHtml(item.status)}">${trackable ? (state.role === 'carrier' ? 'GPS 공유' : '차량 위치') : statusLabel(item.status)}</em>
   </button>`;
 }
@@ -216,12 +221,12 @@ async function dashboard() {
   root.innerHTML = `<section class="dashboard dashboard-loading"><div class="loading-panel"><span class="spinner"></span><b>내 거래를 불러오는 중입니다</b><small>최대 9초 안에 자동으로 종료됩니다.</small></div></section>`;
   const rows = await loadForDashboard();
   rows.sort((a, b) => (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9));
-  const activeRows = rows.filter((item) => item.status !== 'completed');
+  const activeRows = rows.filter((item) => !['completed', 'filled'].includes(item.status));
   const visibleRows = state.role === 'carrier' ? activeRows.filter((item) => item.status !== 'open') : activeRows;
   const currentTrustTemperature = trustTemperature(rows);
   root.innerHTML = `<section class="dashboard">
     <div class="top"><div><p class="eyebrow">${state.role === 'carrier' ? '공컨테이너 운반자' : '공컨테이너 수요자'}</p><h1>안녕하세요.<br>${escapeHtml(accountName())}님</h1></div><button id="switch">역할 변경</button></div>
-    <div class="hero"><span>CONNEXT</span><b>${visibleRows.length}<small> 건</small></b><p>${state.role === 'carrier' ? '내가 진행 중인 운송' : '내가 등록한 요청과 승인 현황'}</p>${state.role === 'carrier' ? `<div class="trust-temperature"><span>CONNEXT 신뢰온도</span><strong>${currentTrustTemperature.toFixed(1)}℃</strong><small>완료 운송 평가 ${rows.filter((item) => item.status === 'completed' && Number(item.connextTrustRating || 0)).length}건 반영</small></div>` : ''}</div>
+    <div class="hero"><span>CONNEXT</span><b>${visibleRows.length}<small> 건</small></b><p>${state.role === 'carrier' ? '내가 진행 중인 운송' : '내가 등록한 요청과 승인 현황'}</p>${state.role === 'carrier' ? `<button type="button" class="trust-temperature" id="openTrust"><span>내 CONNEXT 신뢰온도</span><strong>${currentTrustTemperature.toFixed(1)}℃</strong><small>완료 운송 평가 ${rows.filter((item) => item.status === 'completed' && Number(item.connextTrustRating || 0)).length}건 반영 · 상세보기 ›</small></button>` : ''}</div>
     <div class="section-heading"><h2>${state.role === 'carrier' ? '진행 중 운송' : '내 요청 목록'}</h2><button type="button" id="refresh">새로고침</button></div>
     <div class="mine-list">${visibleRows.length ? visibleRows.map(dashboardCard).join('') : '<div class="empty">현재 표시할 거래가 없습니다.</div>'}</div>
     <button class="action-row" id="action"><span>＋</span><div><b>${state.role === 'carrier' ? '매칭 찾기' : '공컨테이너 요청 등록'}</b></div><em>›</em></button>
@@ -229,6 +234,7 @@ async function dashboard() {
   document.querySelector('#switch').onclick = roleSelect;
   document.querySelector('#refresh').onclick = dashboard;
   document.querySelector('#action').onclick = () => spec(state.role);
+  document.querySelector('#openTrust')?.addEventListener('click', () => trustDetailScreen(rows));
   document.querySelectorAll('[data-dashboard-id]').forEach((button) => {
     button.onclick = () => {
       const item = visibleRows.find((row) => row.id === button.dataset.dashboardId);
@@ -238,6 +244,19 @@ async function dashboard() {
       else say(statusLabel(item?.status));
     };
   });
+}
+
+function trustDetailScreen(rows) {
+  const completed = rows.filter((item) => item.status === 'completed' && Number(item.connextTrustRating || 0));
+  const temperature = trustTemperature(rows);
+  root.innerHTML = `${header('내 신뢰온도')}<section class="trust-detail-view">
+    <div class="trust-gauge"><span>CONNEXT 신뢰온도</span><b>${temperature.toFixed(1)}℃</b><small>기본 36.5℃에서 완료 운송 평가를 누적한 값입니다.</small></div>
+    <div class="trust-scale"><span>신뢰 주의</span><i style="--trust-position:${Math.max(0, Math.min(100, temperature))}%"></i><span>높은 신뢰</span></div>
+    <h2>받은 평가 ${completed.length}건</h2>
+    <div class="trust-history">${completed.length ? completed.map((item) => `<article><div><b>${escapeHtml(item.connextTrustLabel || '평가')}</b><span>${escapeHtml(item.pickup || '')} → ${escapeHtml(item.returnPlace || '')}</span><small>${item.completedAt ? new Date(item.completedAt).toLocaleDateString('ko-KR') : '완료일 없음'}</small></div><strong>${Number(item.connextTrustDelta || 0) > 0 ? '+' : ''}${Number(item.connextTrustDelta || 0).toFixed(1)}℃</strong></article>`).join('') : '<div class="empty">아직 완료된 운송 평가가 없습니다.</div>'}</div>
+    <p class="trust-policy">신뢰온도는 공컨테이너 수요자가 운반 완료 시 남긴 평가만 반영합니다. 거래 1건당 한 번만 평가됩니다.</p>
+  </section>`;
+  bindHeader(dashboard);
 }
 
 function spec(role) {
@@ -269,13 +288,47 @@ function requestForm() {
     <label>반납지<input id="returnPlace" required placeholder="예: 감만CY"><button type="button" class="address-search-button" data-address="returnPlace">지도에서 장소 검색</button></label>
     <div id="distanceResult" class="distance-result">두 위치를 선택하면 이동 거리를 계산합니다.</div>
     <label>희망 인수 시간<input id="time" type="datetime-local" required></label>
-    <label>필요 수량<input id="quantity" type="number" min="1" step="1" value="1" required></label>
-    <label>희망 매칭 가격 (원)<input id="price" type="number" min="0" placeholder="예: 80000" required></label>
+    <section class="quantity-plan"><h3>수량과 분할 운송</h3>
+      <label>총 필요 수량<input id="quantity" type="number" min="1" max="999" step="1" value="1" required><small>같은 장소와 허용 사양 조건으로 필요한 전체 수량입니다.</small></label>
+      <label class="split-check"><input id="allowSplit" type="checkbox" checked><span>여러 운반자가 수량을 나누어 운반할 수 있음</span></label>
+      <div class="allocation-range" id="allocationRange"><label>운반자 1명당 최소 수량<input id="minAllocation" type="number" min="1" max="999" step="1" value="1" required></label><label>운반자 1명당 최대 수량<input id="maxAllocation" type="number" min="1" max="999" step="1" value="1" required></label></div>
+    </section>
+    <label>컨테이너 1대당 희망 운송 가격 (원)<input id="price" type="number" min="0" step="1000" placeholder="예: 80000" required></label>
+    <div class="quantity-summary" id="quantitySummary">총 1대 · 운반자당 1대 · 총 예상금액 0원</div>
     <div class="sticky"><button class="button main">요청 등록</button></div>
   </form>`;
   bindHeader(() => spec('requester'));
   document.querySelectorAll('[data-address]').forEach((button) => { button.onclick = () => openAddressPicker(button.dataset.address); });
+  ['quantity', 'minAllocation', 'maxAllocation', 'price'].forEach((id) => document.querySelector(`#${id}`).addEventListener('input', updateQuantityPlan));
+  document.querySelector('#allowSplit').addEventListener('change', updateQuantityPlan);
+  updateQuantityPlan();
   document.querySelector('#requestForm').onsubmit = saveRequest;
+}
+
+function updateQuantityPlan() {
+  const totalInput = document.querySelector('#quantity');
+  const splitInput = document.querySelector('#allowSplit');
+  const minInput = document.querySelector('#minAllocation');
+  const maxInput = document.querySelector('#maxAllocation');
+  const priceInput = document.querySelector('#price');
+  const summary = document.querySelector('#quantitySummary');
+  if (!totalInput || !splitInput || !minInput || !maxInput || !summary) return;
+  const total = Math.max(1, Math.floor(Number(totalInput.value || 1)));
+  minInput.max = String(total);
+  maxInput.max = String(total);
+  if (!splitInput.checked) {
+    minInput.value = String(total);
+    maxInput.value = String(total);
+  } else {
+    minInput.value = String(Math.min(total, Math.max(1, Math.floor(Number(minInput.value || 1)))));
+    maxInput.value = String(Math.min(total, Math.max(Number(minInput.value), Math.floor(Number(maxInput.value || total)))));
+  }
+  document.querySelector('#allocationRange').classList.toggle('disabled', !splitInput.checked);
+  minInput.disabled = !splitInput.checked;
+  maxInput.disabled = !splitInput.checked;
+  const price = Math.max(0, Number(priceInput?.value || 0));
+  const range = splitInput.checked ? `${minInput.value}~${maxInput.value}대` : `${total}대 전체`;
+  summary.textContent = `총 ${total}대 · 운반자당 ${range} · 총 예상금액 ${(total * price).toLocaleString('ko-KR')}원`;
 }
 
 async function saveRequest(event) {
@@ -283,11 +336,17 @@ async function saveRequest(event) {
   if (!await connect()) return;
   const form = event.currentTarget;
   const submit = form.querySelector('button[type="submit"], .sticky button');
+  const quantity = Math.max(1, Math.floor(Number(form.querySelector('#quantity').value)));
+  const allowSplit = form.querySelector('#allowSplit').checked;
+  const minAllocation = allowSplit ? Math.max(1, Math.floor(Number(form.querySelector('#minAllocation').value))) : quantity;
+  const maxAllocation = allowSplit ? Math.max(1, Math.floor(Number(form.querySelector('#maxAllocation').value))) : quantity;
+  if (minAllocation > maxAllocation || maxAllocation > quantity) return say('분할 운송 최소·최대 수량을 확인해 주세요.');
   submit.disabled = true;
   submit.textContent = '등록 중…';
   try {
     await waitLimit(addDoc(collection(db, 'containerRequests'), {
       ownerId: state.user.uid,
+      recordType: 'request',
       requesterAccount: account(),
       type: state.types[0], size: state.sizes[0],
       acceptableTypes: state.types, acceptableSizes: state.sizes,
@@ -300,8 +359,15 @@ async function saveRequest(event) {
       returnLon: Number(form.querySelector('#returnPlace').dataset.longitude || 0),
       distanceKm: Number(document.querySelector('#distanceResult').dataset.distance || 0),
       time: form.querySelector('#time').value,
-      quantity: Number(form.querySelector('#quantity').value),
+      quantity,
+      totalQuantity: quantity,
+      remainingQuantity: quantity,
+      assignedQuantity: 0,
+      allowSplit,
+      minAllocation,
+      maxAllocation,
       price: Number(form.querySelector('#price').value),
+      unitPrice: Number(form.querySelector('#price').value),
       status: 'open', createdAt: serverTimestamp()
     }));
     say('요청이 Firebase에 등록되었습니다.');
@@ -327,7 +393,8 @@ async function matchList() {
     rows = result.docs.map((row) => ({ id: row.id, ...row.data() })).filter((item) => {
       const types = item.acceptableTypes || [item.type];
       const sizes = item.acceptableSizes || [item.size];
-      return !state.hidden.has(item.id) && state.types.some((type) => types.includes(type)) && state.sizes.some((size) => sizes.includes(size));
+      const remaining = Number(item.remainingQuantity ?? item.totalQuantity ?? item.quantity ?? 1);
+      return item.recordType !== 'allocation' && remaining > 0 && !state.hidden.has(item.id) && state.types.some((type) => types.includes(type)) && state.sizes.some((size) => sizes.includes(size));
     });
   } catch (error) {
     console.error(error);
@@ -335,7 +402,7 @@ async function matchList() {
   }
   const box = document.querySelector('#matchResults');
   box.innerHTML = rows.length ? rows.map((item, index) => `<button type="button" class="match-card" data-id="${escapeHtml(item.id)}">
-    <span class="rank">${index + 1}</span><div><b>${escapeHtml(item.pickup)} <i>→</i> ${escapeHtml(item.returnPlace)}</b><small>${escapeHtml(item.size)} ${escapeHtml(item.type)} · ${Number(item.price || 0).toLocaleString('ko-KR')}원</small><em>매칭 가능</em></div><strong>${Math.max(70, 96 - index * 3)}<small>매칭도</small></strong>
+    <span class="rank">${index + 1}</span><div><b>${escapeHtml(item.pickup)} <i>→</i> ${escapeHtml(item.returnPlace)}</b><small>${escapeHtml(item.size)} ${escapeHtml(item.type)} · 잔여 ${Number(item.remainingQuantity ?? item.totalQuantity ?? item.quantity ?? 1)}대 · 대당 ${Number(item.unitPrice || item.price || 0).toLocaleString('ko-KR')}원</small><em>${item.allowSplit === false ? '전체 운송' : '분할 운송 가능'}</em></div><strong>${Math.max(70, 96 - index * 3)}<small>매칭도</small></strong>
   </button>`).join('') : '<div class="empty">선택한 조건에 맞는 요청이 없습니다.</div>';
   box.querySelectorAll('[data-id]').forEach((button) => { button.onclick = () => { state.selected = rows.find((item) => item.id === button.dataset.id); detail(); }; });
 }
@@ -343,8 +410,12 @@ async function matchList() {
 function detail() {
   const item = state.selected;
   if (!item) return matchList();
+  const total = Number(item.totalQuantity || item.quantity || 1);
+  const remaining = Number(item.remainingQuantity ?? total);
   root.innerHTML = `${header('매칭 적합도 상세')}<section class="detail">
     <div class="route"><span>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</span><b>${escapeHtml(item.size)} ${escapeHtml(item.type)}</b><small>${item.distanceKm ? `예상 이동 거리 ${item.distanceKm}km` : '이동 거리 정보 없음'}</small><div><strong>92<small>점</small></strong><em>매우 적합</em></div></div>
+    <div class="allocation-overview"><div><span>총 요청</span><b>${total}대</b></div><div><span>배정 완료</span><b>${Math.max(0, total - remaining)}대</b></div><div><span>현재 잔여</span><b>${remaining}대</b></div></div>
+    <p class="info">${item.allowSplit === false ? '한 운반자가 남은 수량 전체를 운반하는 요청입니다.' : `운반자 1명당 ${Number(item.minAllocation || 1)}~${Number(item.maxAllocation || total)}대까지 나누어 맡을 수 있습니다.`}</p>
     <div class="sticky"><button class="button main" id="requestMatch">이 조건으로 매칭 요청</button><button class="button ghost" id="other">다른 매칭 보기</button></div>
   </section>`;
   bindHeader(matchList);
@@ -354,10 +425,20 @@ function detail() {
 
 function approval() {
   const item = state.selected;
+  const remaining = Number(item.remainingQuantity ?? item.totalQuantity ?? item.quantity ?? 1);
+  const configuredMin = Number(item.minAllocation || 1);
+  const configuredMax = Number(item.maxAllocation || remaining);
+  const minAllocation = item.allowSplit === false ? remaining : Math.min(configuredMin, remaining);
+  const maxAllocation = item.allowSplit === false ? remaining : Math.min(configuredMax, remaining);
+  const compatibleTypes = (item.acceptableTypes || [item.type]).filter((type) => state.types.includes(type));
+  const compatibleSizes = (item.acceptableSizes || [item.size]).filter((size) => state.sizes.includes(size));
+  state.allocationQuantity = minAllocation;
   root.innerHTML = `${header('재사용 승인 요청')}<section class="approval">
-    <div class="approval-hero"><span>재사용 승인 요청</span><b>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</b><small>${escapeHtml(item.size)} ${escapeHtml(item.type)}</small></div>
+    <div class="approval-hero"><span>재사용 승인 요청</span><b>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</b><small>${escapeHtml(item.size)} ${escapeHtml(item.type)} · 잔여 ${remaining}대</small></div>
+    <div class="allocation-spec"><label>실제 운반 타입<select id="allocationType">${(compatibleTypes.length ? compatibleTypes : [item.type]).map((type) => `<option>${escapeHtml(type)}</option>`).join('')}</select></label><label>실제 운반 크기<select id="allocationSize">${(compatibleSizes.length ? compatibleSizes : [item.size]).map((size) => `<option>${escapeHtml(size)}</option>`).join('')}</select></label></div>
+    <label class="allocation-input">내가 운반할 수량<input id="allocationQuantity" type="number" min="${minAllocation}" max="${maxAllocation}" step="1" value="${minAllocation}" ${item.allowSplit === false ? 'readonly' : ''}><small>${item.allowSplit === false ? `남은 ${remaining}대 전체를 운반합니다.` : `${minAllocation}~${maxAllocation}대 범위에서 선택할 수 있습니다.`}</small></label>
     <h2>선사 제출 정보</h2>
-    <details><summary>컨테이너 정보 직접 확인·입력</summary><label>컨테이너 번호<input id="containerNumber" placeholder="예: OOLU1234567"></label><label>인수 기사 정보<input id="driverInfo" value="${escapeHtml(account())}"></label><label>이동 경로<input id="routeInfo" value="${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}"></label></details>
+    <details><summary>컨테이너 정보 직접 확인·입력</summary><label>컨테이너 번호<input id="containerNumber" placeholder="여러 대면 쉼표로 구분"></label><label>인수 기사 정보<input id="driverInfo" value="${escapeHtml(account())}"></label><label>이동 경로<input id="routeInfo" value="${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}"></label></details>
     <label>선사 선택<select id="shippingLine"><option>HMM</option><option>OOCL</option><option>Maersk</option><option>기타</option></select></label>
     <p class="notice">승인 전에는 배차가 최종 확정되지 않습니다.</p>
     <button class="button main" id="sendApproval">선사에 승인 요청 보내기</button>
@@ -368,19 +449,62 @@ function approval() {
 
 async function sendApproval() {
   const button = document.querySelector('#sendApproval');
+  const allocationQuantity = Math.floor(Number(document.querySelector('#allocationQuantity').value));
+  const allocationType = document.querySelector('#allocationType').value;
+  const allocationSize = document.querySelector('#allocationSize').value;
+  const shippingLine = document.querySelector('#shippingLine').value;
+  const containerNumber = document.querySelector('#containerNumber').value.trim();
+  const driverInfo = document.querySelector('#driverInfo').value.trim();
+  const routeInfo = document.querySelector('#routeInfo').value.trim();
   button.disabled = true;
   button.textContent = '승인 요청 전송 중…';
   try {
     if (!await connect()) throw new Error('Firebase 인증 실패');
-    await waitLimit(updateDoc(doc(db, 'containerRequests', state.selected.id), {
-      status: 'approval', carrierAccount: account(),
-      shippingLine: document.querySelector('#shippingLine').value,
-      containerNumber: document.querySelector('#containerNumber').value.trim(),
-      driverInfo: document.querySelector('#driverInfo').value.trim(),
-      routeInfo: document.querySelector('#routeInfo').value.trim(),
-      approvalRequestedAt: new Date().toISOString()
-    }));
-    state.selected.status = 'approval';
+    const parentRef = doc(db, 'containerRequests', state.selected.id);
+    const allocationRef = doc(collection(db, 'containerRequests'));
+    let allocationData = null;
+    await waitLimit(runTransaction(db, async (transaction) => {
+      const snapshot = await transaction.get(parentRef);
+      if (!snapshot.exists()) throw new Error('요청을 찾을 수 없습니다.');
+      const request = snapshot.data();
+      if (request.status !== 'open') throw new Error('이미 모집이 완료된 요청입니다.');
+      const total = Number(request.totalQuantity || request.quantity || 1);
+      const remaining = Number(request.remainingQuantity ?? total);
+      const min = request.allowSplit === false ? remaining : Math.min(Number(request.minAllocation || 1), remaining);
+      const max = request.allowSplit === false ? remaining : Math.min(Number(request.maxAllocation || remaining), remaining);
+      if (!Number.isInteger(allocationQuantity) || allocationQuantity < min || allocationQuantity > max || allocationQuantity > remaining) throw new Error(`현재 ${min}~${max}대까지 배정할 수 있습니다.`);
+      const nextRemaining = remaining - allocationQuantity;
+      const assigned = Number(request.assignedQuantity || (total - remaining)) + allocationQuantity;
+      transaction.update(parentRef, {
+        remainingQuantity: nextRemaining,
+        assignedQuantity: assigned,
+        status: nextRemaining > 0 ? 'open' : 'filled',
+        allocationUpdatedAt: new Date().toISOString()
+      });
+      allocationData = {
+        ...request,
+        recordType: 'allocation',
+        parentRequestId: snapshot.id,
+        requestTotalQuantity: total,
+        type: allocationType,
+        size: allocationSize,
+        quantity: allocationQuantity,
+        allocatedQuantity: allocationQuantity,
+        remainingQuantity: 0,
+        carrierAccount: account(),
+        status: 'approval',
+        shippingLine,
+        containerNumber,
+        driverInfo,
+        routeInfo,
+        unitPrice: Number(request.unitPrice || request.price || 0),
+        allocationTotalPrice: Number(request.unitPrice || request.price || 0) * allocationQuantity,
+        approvalRequestedAt: new Date().toISOString(),
+        allocationCreatedAt: new Date().toISOString()
+      };
+      transaction.set(allocationRef, allocationData);
+    }), 12000);
+    state.selected = { id: allocationRef.id, ...allocationData };
     say('승인 요청이 저장되었습니다. 이어서 검수 사진을 촬영해 주세요.');
     inspection();
   } catch (error) {
@@ -488,7 +612,7 @@ function requesterReview(item) {
   const hasAiResult = typeof item.aiInspectionResult === 'string' && item.aiInspectionResult.trim();
   const aiResult = hasAiResult ? item.aiInspectionResult.trim() : 'AI 미분석';
   root.innerHTML = `${header('검수 사진 확인')}<section class="confirm review-view">
-    <div class="confirm-head"><span>운반자 승인 요청</span><b>${escapeHtml(item.size)} ${escapeHtml(item.type)}</b><small>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</small></div>
+    <div class="confirm-head"><span>운반자 승인 요청</span><b>${escapeHtml(item.size)} ${escapeHtml(item.type)} · ${Number(item.allocatedQuantity || item.quantity || 1)}대</b><small>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</small></div>
     <div class="carrier-trust-badge" id="carrierTrustBadge"><span>CONNEXT 신뢰온도</span><b>불러오는 중…</b></div>
     <h2>컨테이너 검수 사진</h2>
     <img class="review-photo" id="reviewPhoto" alt="운반자가 보낸 컨테이너 검수 사진">
@@ -565,20 +689,41 @@ async function requestReinspection(item, aiResult, hasAiResult) {
 async function decideRequest(item, status, review) {
   const buttons = document.querySelectorAll('#requestRetake, #rejectRequest, #acceptRequest');
   buttons.forEach((button) => { button.disabled = true; });
+  const decisionData = {
+    status,
+    requesterDecisionAt: new Date().toISOString(),
+    inspectionReviewStatus: status === 'confirmed' ? 'human_confirmed' : 'human_rejected',
+    humanInspectionResult: review.humanResult,
+    aiInspectionResultAtDecision: review.aiResultAtDecision,
+    inspectionReviewNote: review.note,
+    aiResultOverridden: review.aiOverridden,
+    humanInspectedBy: account(),
+    humanInspectedAt: new Date().toISOString(),
+    transportStatus: status === 'confirmed' ? '운송 준비' : '매칭 반려',
+    ...(status === 'confirmed' ? { locationRequestStatus: 'idle', locationSharingStatus: 'not_started' } : {})
+  };
   try {
-    await waitLimit(updateDoc(doc(db, 'containerRequests', item.id), {
-      status,
-      requesterDecisionAt: new Date().toISOString(),
-      inspectionReviewStatus: status === 'confirmed' ? 'human_confirmed' : 'human_rejected',
-      humanInspectionResult: review.humanResult,
-      aiInspectionResultAtDecision: review.aiResultAtDecision,
-      inspectionReviewNote: review.note,
-      aiResultOverridden: review.aiOverridden,
-      humanInspectedBy: account(),
-      humanInspectedAt: new Date().toISOString(),
-      transportStatus: status === 'confirmed' ? '운송 준비' : '매칭 반려',
-      ...(status === 'confirmed' ? { locationRequestStatus: 'idle', locationSharingStatus: 'not_started' } : {})
-    }));
+    if (status === 'rejected' && item.parentRequestId) {
+      await waitLimit(runTransaction(db, async (transaction) => {
+        const parentRef = doc(db, 'containerRequests', item.parentRequestId);
+        const allocationRef = doc(db, 'containerRequests', item.id);
+        const parentSnapshot = await transaction.get(parentRef);
+        if (!parentSnapshot.exists()) throw new Error('원 요청을 찾을 수 없습니다.');
+        const parent = parentSnapshot.data();
+        const total = Number(parent.totalQuantity || parent.quantity || item.requestTotalQuantity || 1);
+        const returned = Number(item.allocatedQuantity || item.quantity || 1);
+        const remaining = Math.min(total, Number(parent.remainingQuantity || 0) + returned);
+        transaction.update(allocationRef, decisionData);
+        transaction.update(parentRef, {
+          remainingQuantity: remaining,
+          assignedQuantity: Math.max(0, Number(parent.assignedQuantity || (total - Number(parent.remainingQuantity || 0))) - returned),
+          status: 'open',
+          allocationUpdatedAt: new Date().toISOString()
+        });
+      }), 12000);
+    } else {
+      await waitLimit(updateDoc(doc(db, 'containerRequests', item.id), decisionData));
+    }
     say(status === 'confirmed' ? '매칭이 최종 확정되었습니다.' : '매칭을 반려했습니다.');
     dashboard();
   } catch (error) {
@@ -632,7 +777,7 @@ function locationSummary(item) {
 
 function requesterLocationScreen(item) {
   root.innerHTML = `${header('차량 위치 확인')}<section class="tracking-view">
-    <div class="tracking-head"><span>운송 진행 중</span><b>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</b><small>${escapeHtml(item.size)} ${escapeHtml(item.type)}</small></div>
+    <div class="tracking-head"><span>운송 진행 중</span><b>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</b><small>${escapeHtml(item.size)} ${escapeHtml(item.type)} · ${Number(item.allocatedQuantity || item.quantity || 1)}대</small></div>
     ${locationSummary(item)}
     <div id="tmapMap" class="tmap-map"><div class="map-placeholder"><b>TMAP 경로</b><small>${item.carrierLocation ? '경로와 남은 시간을 자동으로 계산하고 있습니다.' : '운반자가 위치를 전송하면 경로를 자동 계산합니다.'}</small></div></div>
     <div id="routeSummary" class="route-summary hidden"></div>
@@ -658,7 +803,7 @@ function requesterLocationScreen(item) {
 
 function completeTransportScreen(item) {
   root.innerHTML = `${header('운반 완료 확인')}<section class="completion-view">
-    <div class="completion-head"><span>운반 완료</span><b>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</b><small>${escapeHtml(item.size)} ${escapeHtml(item.type)}</small></div>
+    <div class="completion-head"><span>운반 완료</span><b>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</b><small>${escapeHtml(item.size)} ${escapeHtml(item.type)} · ${Number(item.allocatedQuantity || item.quantity || 1)}대</small></div>
     <h2>CONNEXT 신뢰온도 평가</h2>
     <p class="completion-guide">공컨테이너 운반자의 시간 준수, 소통, 컨테이너 인계 상태를 종합해 평가해 주세요. 기본 온도는 36.5℃이며 완료된 평가에 따라 누적됩니다.</p>
     <div class="trust-options">${Object.entries(TRUST_RATINGS).reverse().map(([score, rating]) => `<button type="button" data-trust-score="${score}"><b>${rating.label}</b><span>${rating.delta > 0 ? '+' : ''}${rating.delta.toFixed(1)}℃</span></button>`).join('')}</div>
@@ -733,7 +878,7 @@ async function requestCarrierLocation(item) {
 function carrierLocationScreen(item) {
   const requested = item.locationRequestStatus === 'requested';
   root.innerHTML = `${header('차량 GPS 공유')}<section class="tracking-view carrier-tracking">
-    <div class="tracking-head"><span>${requested ? '최신 위치 요청 도착' : '확정 운송'}</span><b>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</b><small>${escapeHtml(item.size)} ${escapeHtml(item.type)}</small></div>
+    <div class="tracking-head"><span>${requested ? '최신 위치 요청 도착' : '확정 운송'}</span><b>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</b><small>${escapeHtml(item.size)} ${escapeHtml(item.type)} · ${Number(item.allocatedQuantity || item.quantity || 1)}대</small></div>
     ${locationSummary(item)}
     <div class="consent-box"><b>정밀 위치정보 공유 동의</b><p>현재 GPS 좌표와 정확도, 전송 시각이 이 거래의 공컨테이너 수요자에게 제공됩니다. 다른 사용자에게는 표시하지 않습니다.</p><label class="check"><input id="locationConsent" type="checkbox"><span>현재 운송 위치 공유에 동의합니다.</span></label></div>
     <button type="button" class="button main" id="shareLocation">현재 GPS 위치 전송</button>
