@@ -165,9 +165,42 @@ async function loadForDashboard() {
 }
 
 const statusLabel = (status) => ({
-  open: '매칭 대기', approval: '승인 대기', review: '승인 요청 도착', reinspection: '재촬영 요청', confirmed: '매칭 확정', rejected: '매칭 반려'
+  open: '매칭 대기', approval: '승인 대기', review: '승인 요청 도착', reinspection: '재촬영 요청', confirmed: '매칭 확정', completed: '운반 완료', rejected: '매칭 반려'
 })[status] || '진행 중';
-const statusRank = { confirmed: 0, review: 1, reinspection: 2, approval: 3, open: 4, rejected: 5 };
+const statusRank = { confirmed: 0, review: 1, reinspection: 2, approval: 3, open: 4, rejected: 5, completed: 6 };
+const TRUST_BASE_TEMPERATURE = 36.5;
+const TRUST_RATINGS = {
+  5: { label: '매우 만족', delta: 1.0 },
+  4: { label: '만족', delta: 0.5 },
+  3: { label: '보통', delta: 0 },
+  2: { label: '아쉬움', delta: -0.5 },
+  1: { label: '매우 아쉬움', delta: -1.0 }
+};
+
+function trustTemperature(rows) {
+  const change = rows
+    .filter((item) => item.status === 'completed')
+    .reduce((total, item) => {
+      const delta = Number(item.connextTrustDelta || 0);
+      return total + (Number.isFinite(delta) ? delta : 0);
+    }, 0);
+  return Math.max(0, Math.min(100, TRUST_BASE_TEMPERATURE + change));
+}
+
+async function loadCarrierTrust(carrierAccount) {
+  if (!carrierAccount || !await connect()) return null;
+  try {
+    const snapshot = await waitLimit(getDocs(query(collection(db, 'containerRequests'), where('carrierAccount', '==', carrierAccount))));
+    const rows = snapshot.docs.map((row) => row.data());
+    return {
+      temperature: trustTemperature(rows),
+      count: rows.filter((row) => row.status === 'completed' && Number(row.connextTrustRating || 0)).length
+    };
+  } catch (error) {
+    console.warn('운반자 신뢰온도 조회 실패', error);
+    return null;
+  }
+}
 
 function dashboardCard(item) {
   const actionable = (state.role === 'requester' && ['approval', 'review'].includes(item.status)) || (state.role === 'carrier' && item.status === 'reinspection');
@@ -183,10 +216,12 @@ async function dashboard() {
   root.innerHTML = `<section class="dashboard dashboard-loading"><div class="loading-panel"><span class="spinner"></span><b>내 거래를 불러오는 중입니다</b><small>최대 9초 안에 자동으로 종료됩니다.</small></div></section>`;
   const rows = await loadForDashboard();
   rows.sort((a, b) => (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9));
-  const visibleRows = state.role === 'carrier' ? rows.filter((item) => item.status !== 'open') : rows;
+  const activeRows = rows.filter((item) => item.status !== 'completed');
+  const visibleRows = state.role === 'carrier' ? activeRows.filter((item) => item.status !== 'open') : activeRows;
+  const currentTrustTemperature = trustTemperature(rows);
   root.innerHTML = `<section class="dashboard">
     <div class="top"><div><p class="eyebrow">${state.role === 'carrier' ? '공컨테이너 운반자' : '공컨테이너 수요자'}</p><h1>안녕하세요.<br>${escapeHtml(accountName())}님</h1></div><button id="switch">역할 변경</button></div>
-    <div class="hero"><span>CONNEXT</span><b>${visibleRows.length}<small> 건</small></b><p>${state.role === 'carrier' ? '내가 진행 중인 운송' : '내가 등록한 요청과 승인 현황'}</p></div>
+    <div class="hero"><span>CONNEXT</span><b>${visibleRows.length}<small> 건</small></b><p>${state.role === 'carrier' ? '내가 진행 중인 운송' : '내가 등록한 요청과 승인 현황'}</p>${state.role === 'carrier' ? `<div class="trust-temperature"><span>CONNEXT 신뢰온도</span><strong>${currentTrustTemperature.toFixed(1)}℃</strong><small>완료 운송 평가 ${rows.filter((item) => item.status === 'completed' && Number(item.connextTrustRating || 0)).length}건 반영</small></div>` : ''}</div>
     <div class="section-heading"><h2>${state.role === 'carrier' ? '진행 중 운송' : '내 요청 목록'}</h2><button type="button" id="refresh">새로고침</button></div>
     <div class="mine-list">${visibleRows.length ? visibleRows.map(dashboardCard).join('') : '<div class="empty">현재 표시할 거래가 없습니다.</div>'}</div>
     <button class="action-row" id="action"><span>＋</span><div><b>${state.role === 'carrier' ? '매칭 찾기' : '공컨테이너 요청 등록'}</b></div><em>›</em></button>
@@ -454,6 +489,7 @@ function requesterReview(item) {
   const aiResult = hasAiResult ? item.aiInspectionResult.trim() : 'AI 미분석';
   root.innerHTML = `${header('검수 사진 확인')}<section class="confirm review-view">
     <div class="confirm-head"><span>운반자 승인 요청</span><b>${escapeHtml(item.size)} ${escapeHtml(item.type)}</b><small>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</small></div>
+    <div class="carrier-trust-badge" id="carrierTrustBadge"><span>CONNEXT 신뢰온도</span><b>불러오는 중…</b></div>
     <h2>컨테이너 검수 사진</h2>
     <img class="review-photo" id="reviewPhoto" alt="운반자가 보낸 컨테이너 검수 사진">
     <div class="result"><span>${hasPhoto ? '✓' : '!'}</span><div><b>${hasPhoto ? (hasAiResult ? `AI 1차 분류: ${escapeHtml(aiResult)}` : 'AI 분석 결과 없음 · 사람 확인 필요') : '검수 사진 미도착'}</b><small>${hasPhoto ? 'AI 결과가 있더라도 보조 자료이며 아래 사람 확인이 최종 기록입니다.' : '사진이 도착하기 전에는 매칭을 최종 확정할 수 없습니다.'}</small></div></div>
@@ -465,6 +501,13 @@ function requesterReview(item) {
     <button class="button main" id="acceptRequest">매칭 최종 확정</button>
   </section>`;
   bindHeader(dashboard);
+  loadCarrierTrust(item.carrierAccount).then((trust) => {
+    const badge = document.querySelector('#carrierTrustBadge');
+    if (!badge) return;
+    badge.innerHTML = trust
+      ? `<span>CONNEXT 신뢰온도 · 완료 평가 ${trust.count}건</span><b>${trust.temperature.toFixed(1)}℃</b>`
+      : '<span>CONNEXT 신뢰온도</span><b>평가 정보 없음</b>';
+  });
   const photo = document.querySelector('#reviewPhoto');
   if (hasPhoto) photo.src = item.inspectionPhoto;
   else { photo.replaceWith(Object.assign(document.createElement('div'), { className: 'photo-missing', textContent: '운반자가 검수 사진을 아직 전송하지 않았습니다.' })); }
@@ -595,11 +638,13 @@ function requesterLocationScreen(item) {
     <div id="routeSummary" class="route-summary hidden"></div>
     <button type="button" class="button main" id="requestLocation">운반자에게 최신 위치 요청</button>
     <button type="button" class="button ghost" id="refreshLocation">위치 정보 새로고침</button>
+    <button type="button" class="button complete-transport" id="completeTransport">운반 완료</button>
     <p class="location-notice">차량 위치는 확정된 이 거래의 공컨테이너 수요자에게만 표시됩니다. 위치 요청만으로 운반자의 GPS에 강제 접근할 수 없으며 운반자의 동의와 브라우저 위치 권한이 필요합니다.</p>
   </section>`;
   bindHeader(dashboard);
   document.querySelector('#requestLocation').onclick = () => requestCarrierLocation(item);
   document.querySelector('#refreshLocation').onclick = () => refreshTrackingItem(item.id, requesterLocationScreen);
+  document.querySelector('#completeTransport').onclick = () => completeTransportScreen(item);
   if (item.carrierLocation) {
     resolveTmapAppKey().then((key) => {
       if (key) renderTmapRoute(item, key);
@@ -608,6 +653,60 @@ function requesterLocationScreen(item) {
         if (mapBox) mapBox.innerHTML = '<div class="map-placeholder error"><b>경로 서비스 연결 준비 중</b><small>공통 TMAP 설정을 불러오지 못했습니다. 잠시 후 새로고침해 주세요.</small></div>';
       }
     });
+  }
+}
+
+function completeTransportScreen(item) {
+  root.innerHTML = `${header('운반 완료 확인')}<section class="completion-view">
+    <div class="completion-head"><span>운반 완료</span><b>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</b><small>${escapeHtml(item.size)} ${escapeHtml(item.type)}</small></div>
+    <h2>CONNEXT 신뢰온도 평가</h2>
+    <p class="completion-guide">공컨테이너 운반자의 시간 준수, 소통, 컨테이너 인계 상태를 종합해 평가해 주세요. 기본 온도는 36.5℃이며 완료된 평가에 따라 누적됩니다.</p>
+    <div class="trust-options">${Object.entries(TRUST_RATINGS).reverse().map(([score, rating]) => `<button type="button" data-trust-score="${score}"><b>${rating.label}</b><span>${rating.delta > 0 ? '+' : ''}${rating.delta.toFixed(1)}℃</span></button>`).join('')}</div>
+    <label class="completion-note">평가 메모 (선택)<textarea id="completionReview" maxlength="200" rows="3" placeholder="운반 과정에서 좋았던 점이나 개선이 필요한 점을 적어 주세요."></textarea></label>
+    <label class="check"><input id="completionChecked" type="checkbox"><span>컨테이너가 반납지에 도착했고 운반이 완료된 것을 확인했습니다.</span></label>
+    <p class="completion-warning">완료하면 이 거래는 진행 중 목록에서 사라지며, 평가 결과는 해당 운반자의 신뢰온도에 반영됩니다.</p>
+    <button type="button" class="button main" id="confirmCompletion">평가하고 운반 완료</button>
+  </section>`;
+  bindHeader(() => requesterLocationScreen(item));
+  let selectedScore = 0;
+  document.querySelectorAll('[data-trust-score]').forEach((button) => {
+    button.onclick = () => {
+      selectedScore = Number(button.dataset.trustScore);
+      document.querySelectorAll('[data-trust-score]').forEach((option) => option.classList.toggle('selected', option === button));
+    };
+  });
+  document.querySelector('#confirmCompletion').onclick = () => finishTransport(item, selectedScore);
+}
+
+async function finishTransport(item, score) {
+  const rating = TRUST_RATINGS[score];
+  if (!rating) return say('운반자 평가를 선택해 주세요.');
+  if (!document.querySelector('#completionChecked').checked) return say('운반 완료 확인에 체크해 주세요.');
+  const button = document.querySelector('#confirmCompletion');
+  button.disabled = true;
+  button.textContent = '운반 완료 처리 중…';
+  try {
+    await waitLimit(updateDoc(doc(db, 'containerRequests', item.id), {
+      status: 'completed',
+      transportStatus: '운반 완료',
+      completedAt: new Date().toISOString(),
+      completedBy: account(),
+      connextTrustRating: score,
+      connextTrustLabel: rating.label,
+      connextTrustDelta: rating.delta,
+      connextTrustRatedBy: account(),
+      connextTrustRatedAt: new Date().toISOString(),
+      connextTrustReview: document.querySelector('#completionReview').value.trim(),
+      locationRequestStatus: 'closed',
+      locationSharingStatus: 'completed'
+    }));
+    say(`운반을 완료하고 신뢰온도 ${rating.delta > 0 ? '+' : ''}${rating.delta.toFixed(1)}℃를 반영했습니다.`);
+    dashboard();
+  } catch (error) {
+    console.error(error);
+    say('운반 완료를 저장하지 못했습니다. 다시 시도해 주세요.');
+    button.disabled = false;
+    button.textContent = '평가하고 운반 완료';
   }
 }
 
