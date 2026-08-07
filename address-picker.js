@@ -3,6 +3,12 @@ const ADDRESS_FIELDS = [
   { id: 'returnPlace', title: '반납지 선택' }
 ];
 
+const BUSAN_FALLBACKS = [
+  { name: '부산신항', road: '부산광역시 강서구 신항남로 372', lat: 35.0786, lon: 128.8324 },
+  { name: '감만CY', road: '부산광역시 남구 북항로 1', lat: 35.1153, lon: 129.0836 },
+  { name: '부산항 북항', road: '부산광역시 동구 충장대로 206', lat: 35.1142, lon: 129.0459 }
+];
+
 function roadAddress(result) {
   const a = result.address || {};
   const street = [a.road, a.house_number].filter(Boolean).join(' ');
@@ -41,16 +47,24 @@ function openAddressPicker(field, target) {
     results.innerHTML = '<p>장소와 도로명 주소를 찾는 중…</p>';
     try {
       const response = await fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=5&accept-language=ko&q=${encodeURIComponent(query)}`);
-      const places = await response.json();
+      let places = await response.json();
+      if (!places.length) places = fallbackPlaces(query);
       results.innerHTML = places.length ? places.map((place, index) => `<article data-index="${index}"><b>${roadAddress(place)}</b><small>${place.display_name}</small><button type="button">지도에서 확인</button></article>`).join('') : '<p>검색 결과가 없습니다. 더 구체적인 장소명이나 주소를 입력해 주세요.</p>';
       results.querySelectorAll('article').forEach((row) => row.querySelector('button').onclick = () => showMap(row, places[Number(row.dataset.index)], target, close));
     } catch (error) {
-      results.innerHTML = '<p>장소 검색에 실패했습니다. 인터넷 연결을 확인한 뒤 다시 시도해 주세요.</p>';
+      const places = fallbackPlaces(query);
+      results.innerHTML = places.length ? places.map((place, index) => `<article data-index="${index}"><b>${roadAddress(place)}</b><small>${place.display_name}</small><button type="button">지도에서 확인</button></article>`).join('') : '<p>장소 검색에 실패했습니다. 부산신항, 감만CY처럼 구체적인 장소명을 입력해 주세요.</p>';
+      results.querySelectorAll('article').forEach((row) => row.querySelector('button').onclick = () => showMap(row, places[Number(row.dataset.index)], target, close));
       console.error(error);
     }
   };
   form.onsubmit = (event) => { event.preventDefault(); search(); };
   if (target.value) search();
+}
+
+function fallbackPlaces(query) {
+  const keyword = query.replace(/\s/g, '').toLowerCase();
+  return BUSAN_FALLBACKS.filter((item) => keyword.includes(item.name.replace(/\s/g, '').toLowerCase()) || item.name.replace(/\s/g, '').toLowerCase().includes(keyword)).map((item) => ({ lat: item.lat, lon: item.lon, display_name: `${item.name}, ${item.road}`, address: { road: item.road } }));
 }
 
 function showMap(row, place, target, close) {
