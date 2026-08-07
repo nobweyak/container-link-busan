@@ -11,10 +11,14 @@ const pending=x=>x.status==='approval'||x.status==='review';
 function draw(){
  const dashboard=document.querySelector('.dashboard');
  if(!dashboard||localStorage.getItem('container-link-role')!=='requester')return;
- dashboard.querySelector('.incoming-approvals')?.remove();
  const rows=latest.filter(x=>x.requesterAccount===activeEmail()&&pending(x));
- if(!rows.length)return;
+ const existing=dashboard.querySelector('.incoming-approvals');
+ if(!rows.length){existing?.remove();return;}
+ const signature=rows.map(x=>x.id+':'+x.status+':'+Boolean(x.inspectionPhoto)).join('|');
+ if(existing?.dataset.signature===signature)return;
+ existing?.remove();
  const section=document.createElement('section');section.className='incoming-approvals';
+ section.dataset.signature=signature;
  section.innerHTML='<h2>승인 요청 <small>'+rows.length+'건</small></h2>'+rows.map(x=>'<button type="button" class="approval-card '+(x.inspectionPhoto?'ready':'waiting')+'" data-request="'+x.id+'">'+(x.inspectionPhoto?'<img src="'+x.inspectionPhoto+'" alt="컨테이너 검수 사진">':'<div class="photo-placeholder">사진<br>대기</div>')+'<span><b>'+x.size+' '+x.type+'</b><small>'+x.pickup+' → '+x.returnPlace+'</small><em>'+(x.inspectionPhoto?'사진 확인 후 수락·반려':'운반자 검수 사진 전송 대기')+'</em></span><strong>›</strong></button>').join('');
  dashboard.querySelector('.action-row')?.before(section);
  section.querySelectorAll('[data-request]').forEach(button=>button.onclick=()=>{const item=latest.find(x=>x.id===button.dataset.request);if(item?.inspectionPhoto)openReview(item);});
