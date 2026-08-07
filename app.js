@@ -2,7 +2,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.10.0/fireba
 import { getAuth, signInAnonymously } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
 import {
   getFirestore, collection, addDoc, getDocs, query, where,
-  updateDoc, doc, serverTimestamp
+  updateDoc, getDoc, onSnapshot, doc, serverTimestamp
 } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
 
@@ -24,6 +24,8 @@ const state = {
 };
 let connectionPromise = null;
 let toastTimer = null;
+let stopLocationRequestListener = null;
+let lastHandledLocationRequest = '';
 
 const account = () => sessionStorage.getItem('container-link-active-account') || '';
 function accountName() {
@@ -168,13 +170,15 @@ const statusRank = { confirmed: 0, review: 1, approval: 2, open: 3, rejected: 4 
 
 function dashboardCard(item) {
   const actionable = state.role === 'requester' && ['approval', 'review'].includes(item.status);
-  return `<button type="button" class="mini-card ${actionable ? 'actionable' : ''}" data-dashboard-id="${escapeHtml(item.id)}">
+  const trackable = item.status === 'confirmed';
+  return `<button type="button" class="mini-card ${actionable ? 'actionable' : ''} ${trackable ? 'trackable' : ''}" data-dashboard-id="${escapeHtml(item.id)}">
     <div><b>${escapeHtml(item.size)} ${escapeHtml(item.type)}</b><span>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</span><small>${Number(item.price || 0).toLocaleString('ko-KR')}원</small></div>
-    <em class="state ${escapeHtml(item.status)}">${statusLabel(item.status)}</em>
+    <em class="state ${escapeHtml(item.status)}">${trackable ? (state.role === 'carrier' ? 'GPS 공유' : '차량 위치') : statusLabel(item.status)}</em>
   </button>`;
 }
 
 async function dashboard() {
+  stopAutoLocationResponse();
   root.innerHTML = `<section class="dashboard dashboard-loading"><div class="loading-panel"><span class="spinner"></span><b>내 거래를 불러오는 중입니다</b><small>최대 9초 안에 자동으로 종료됩니다.</small></div></section>`;
   const rows = await loadForDashboard();
   rows.sort((a, b) => (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9));
@@ -184,15 +188,18 @@ async function dashboard() {
     <div class="hero"><span>CONNEXT</span><b>${visibleRows.length}<small> 건</small></b><p>${state.role === 'carrier' ? '내가 진행 중인 운송' : '내가 등록한 요청과 승인 현황'}</p></div>
     <div class="section-heading"><h2>${state.role === 'carrier' ? '진행 중 운송' : '내 요청 목록'}</h2><button type="button" id="refresh">새로고침</button></div>
     <div class="mine-list">${visibleRows.length ? visibleRows.map(dashboardCard).join('') : '<div class="empty">현재 표시할 거래가 없습니다.</div>'}</div>
+    ${state.role === 'requester' ? '<button type="button" class="tmap-setup-row" id="tmapSetup"><span>TMAP</span><div><b>경로 API 연동 설정</b><small>appKey를 이 브라우저에 안전하게 저장</small></div><em>›</em></button>' : ''}
     <button class="action-row" id="action"><span>＋</span><div><b>${state.role === 'carrier' ? '매칭 찾기' : '공컨테이너 요청 등록'}</b></div><em>›</em></button>
   </section>`;
   document.querySelector('#switch').onclick = roleSelect;
   document.querySelector('#refresh').onclick = dashboard;
   document.querySelector('#action').onclick = () => spec(state.role);
+  document.querySelector('#tmapSetup')?.addEventListener('click', openTmapKeyDialog);
   document.querySelectorAll('[data-dashboard-id]').forEach((button) => {
     button.onclick = () => {
       const item = visibleRows.find((row) => row.id === button.dataset.dashboardId);
       if (state.role === 'requester' && ['approval', 'review'].includes(item?.status)) requesterReview(item);
+      else if (item?.status === 'confirmed') transportTracking(item);
       else say(statusLabel(item?.status));
     };
   });
@@ -466,7 +473,8 @@ async function decideRequest(item, status) {
     await waitLimit(updateDoc(doc(db, 'containerRequests', item.id), {
       status,
       requesterDecisionAt: new Date().toISOString(),
-      transportStatus: status === 'confirmed' ? '매칭 확정' : '매칭 반려'
+      transportStatus: status === 'confirmed' ? '운송 준비' : '매칭 반려',
+      ...(status === 'confirmed' ? { locationRequestStatus: 'idle', locationSharingStatus: 'not_started' } : {})
     }));
     say(status === 'confirmed' ? '매칭이 최종 확정되었습니다.' : '매칭을 반려했습니다.');
     dashboard();
@@ -474,6 +482,279 @@ async function decideRequest(item, status) {
     console.error(error);
     say('처리에 실패했습니다. Firebase 수정 권한을 확인해 주세요.');
     buttons.forEach((button) => { button.disabled = false; });
+  }
+}
+
+function transportTracking(item) {
+  if (state.role === 'carrier') carrierLocationScreen(item);
+  else requesterLocationScreen(item);
+}
+
+function openTmapKeyDialog() {
+  document.querySelector('.tmap-key-modal')?.remove();
+  const modal = document.createElement('div');
+  modal.className = 'address-modal tmap-key-modal';
+  modal.innerHTML = `<section role="dialog" aria-modal="true" aria-label="TMAP API 연동 설정"><header><b>TMAP API 연동 설정</b><button type="button" id="closeTmapSettings">×</button></header><div class="tmap-key-body"><p>발급받은 appKey를 입력하세요. 키는 현재 브라우저의 저장 공간에만 보관되며 GitHub와 Firebase에는 저장되지 않습니다.</p><label>TMAP appKey<input id="globalTmapKey" type="password" autocomplete="off" placeholder="appKey 입력"></label><button type="button" class="button main" id="saveGlobalTmapKey">키 저장</button><small>자동차 경로안내 API와 JavaScript 지도 상품이 활성화된 키가 필요합니다.</small></div></section>`;
+  document.body.append(modal);
+  modal.querySelector('#globalTmapKey').value = localStorage.getItem('connext-tmap-app-key') || '';
+  const close = () => modal.remove();
+  modal.querySelector('#closeTmapSettings').onclick = close;
+  modal.onclick = (event) => { if (event.target === modal) close(); };
+  modal.querySelector('#saveGlobalTmapKey').onclick = () => {
+    const key = modal.querySelector('#globalTmapKey').value.trim();
+    if (!key) return say('TMAP appKey를 입력해 주세요.');
+    localStorage.setItem('connext-tmap-app-key', key);
+    say('TMAP 키를 이 브라우저에 저장했습니다.');
+    close();
+  };
+}
+
+function locationSummary(item) {
+  const location = item.carrierLocation;
+  if (!location?.latitude || !location?.longitude) return '<div class="tracking-empty"><b>아직 공유된 차량 위치가 없습니다.</b><small>운반자에게 최신 위치를 요청해 주세요.</small></div>';
+  const recorded = location.recordedAt ? new Date(location.recordedAt).toLocaleString('ko-KR') : '기록 시각 없음';
+  return `<div class="location-summary"><span>● 최신 GPS</span><b>${Number(location.latitude).toFixed(5)}, ${Number(location.longitude).toFixed(5)}</b><small>${escapeHtml(recorded)} · 정확도 약 ${Math.round(Number(location.accuracy || 0))}m</small></div>`;
+}
+
+function requesterLocationScreen(item) {
+  root.innerHTML = `${header('차량 위치 확인')}<section class="tracking-view">
+    <div class="tracking-head"><span>운송 진행 중</span><b>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</b><small>${escapeHtml(item.size)} ${escapeHtml(item.type)}</small></div>
+    ${locationSummary(item)}
+    <div id="tmapMap" class="tmap-map"><div class="map-placeholder"><b>TMAP 경로</b><small>${item.carrierLocation ? 'API 키를 설정하면 경로와 남은 시간이 표시됩니다.' : '운반자가 위치를 전송하면 경로를 계산할 수 있습니다.'}</small></div></div>
+    <div id="routeSummary" class="route-summary hidden"></div>
+    <button type="button" class="button main" id="requestLocation">운반자에게 최신 위치 요청</button>
+    <button type="button" class="button ghost" id="refreshLocation">위치 정보 새로고침</button>
+    <details class="tmap-settings"><summary>TMAP API 키 설정</summary><p>키는 이 브라우저에만 저장되며 GitHub와 Firebase에는 전송하지 않습니다.</p><label>TMAP appKey<input id="tmapKey" type="password" autocomplete="off" placeholder="발급받은 appKey 입력"></label><button type="button" class="button ghost" id="saveTmapKey">이 브라우저에 키 저장</button></details>
+    <p class="location-notice">차량 위치는 확정된 이 거래의 필요자에게만 표시됩니다. 위치 요청만으로 운반자의 GPS에 강제 접근할 수 없으며 운반자의 동의와 브라우저 위치 권한이 필요합니다.</p>
+  </section>`;
+  bindHeader(dashboard);
+  const savedKey = localStorage.getItem('connext-tmap-app-key') || '';
+  document.querySelector('#tmapKey').value = savedKey;
+  document.querySelector('#requestLocation').onclick = () => requestCarrierLocation(item);
+  document.querySelector('#refreshLocation').onclick = () => refreshTrackingItem(item.id, requesterLocationScreen);
+  document.querySelector('#saveTmapKey').onclick = () => {
+    const key = document.querySelector('#tmapKey').value.trim();
+    if (!key) return say('TMAP appKey를 입력해 주세요.');
+    localStorage.setItem('connext-tmap-app-key', key);
+    say('TMAP 키를 이 브라우저에 저장했습니다.');
+    if (item.carrierLocation) renderTmapRoute(item, key);
+  };
+  if (savedKey && item.carrierLocation) renderTmapRoute(item, savedKey);
+}
+
+async function requestCarrierLocation(item) {
+  const button = document.querySelector('#requestLocation');
+  button.disabled = true;
+  button.textContent = '위치 요청 저장 중…';
+  try {
+    await waitLimit(updateDoc(doc(db, 'containerRequests', item.id), {
+      locationRequestStatus: 'requested',
+      locationRequestedAt: new Date().toISOString(),
+      locationRequestedBy: account()
+    }));
+    say('운반자에게 최신 위치를 요청했습니다.');
+    button.textContent = '위치 요청 완료';
+  } catch (error) {
+    console.error(error);
+    say('위치 요청을 저장하지 못했습니다. Firebase 권한을 확인해 주세요.');
+    button.disabled = false;
+    button.textContent = '운반자에게 최신 위치 요청';
+  }
+}
+
+function carrierLocationScreen(item) {
+  const requested = item.locationRequestStatus === 'requested';
+  root.innerHTML = `${header('차량 GPS 공유')}<section class="tracking-view carrier-tracking">
+    <div class="tracking-head"><span>${requested ? '최신 위치 요청 도착' : '확정 운송'}</span><b>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</b><small>${escapeHtml(item.size)} ${escapeHtml(item.type)}</small></div>
+    ${locationSummary(item)}
+    <div class="consent-box"><b>정밀 위치정보 공유 동의</b><p>현재 GPS 좌표와 정확도, 전송 시각이 이 거래의 컨테이너 필요자에게 제공됩니다. 다른 사용자에게는 표시하지 않습니다.</p><label class="check"><input id="locationConsent" type="checkbox"><span>현재 운송 위치 공유에 동의합니다.</span></label></div>
+    <button type="button" class="button main" id="shareLocation">현재 GPS 위치 전송</button>
+    <button type="button" class="button ghost" id="enableAutoLocation">위치 요청 자동 응답 시작</button>
+    <button type="button" class="button ghost" id="refreshCarrierRequest">위치 요청 확인</button>
+    <p class="location-notice">자동 응답은 이 화면이 열려 있는 동안에만 작동하며, 필요자가 새 위치를 요청할 때에만 GPS를 읽습니다. 화면을 닫으면 즉시 중단됩니다.</p>
+  </section>`;
+  bindHeader(dashboard);
+  document.querySelector('#shareLocation').onclick = () => shareCarrierLocation(item);
+  document.querySelector('#enableAutoLocation').onclick = () => enableAutoLocationResponse(item);
+  document.querySelector('#refreshCarrierRequest').onclick = () => refreshTrackingItem(item.id, carrierLocationScreen);
+}
+
+function stopAutoLocationResponse() {
+  if (stopLocationRequestListener) stopLocationRequestListener();
+  stopLocationRequestListener = null;
+  lastHandledLocationRequest = '';
+}
+
+function enableAutoLocationResponse(item) {
+  if (!document.querySelector('#locationConsent').checked) return say('위치 공유 동의에 체크해 주세요.');
+  if (!navigator.geolocation) return say('이 브라우저는 GPS 위치 기능을 지원하지 않습니다.');
+  const button = document.querySelector('#enableAutoLocation');
+  button.disabled = true;
+  button.textContent = '위치 권한 확인 중…';
+  navigator.geolocation.getCurrentPosition(
+    async (position) => {
+      const saved = await saveCarrierLocation(item, position, false);
+      if (!saved) { button.disabled = false; button.textContent = '위치 요청 자동 응답 시작'; return; }
+      startLocationRequestListener(item);
+      button.textContent = '자동 응답 활성화됨';
+      say('이 화면이 열려 있는 동안 위치 요청에 자동 응답합니다.');
+    },
+    (error) => {
+      console.error(error);
+      say(error.code === 1 ? '브라우저에서 위치 권한을 허용해 주세요.' : '현재 위치를 확인하지 못했습니다.');
+      button.disabled = false;
+      button.textContent = '위치 요청 자동 응답 시작';
+    },
+    { enableHighAccuracy: true, timeout: 12000, maximumAge: 5000 }
+  );
+}
+
+function startLocationRequestListener(item) {
+  stopAutoLocationResponse();
+  stopLocationRequestListener = onSnapshot(doc(db, 'containerRequests', item.id), (snapshot) => {
+    if (!snapshot.exists()) return;
+    const fresh = { id: snapshot.id, ...snapshot.data() };
+    const requestedAt = fresh.locationRequestedAt || '';
+    if (fresh.locationRequestStatus !== 'requested' || !requestedAt || requestedAt === lastHandledLocationRequest) return;
+    lastHandledLocationRequest = requestedAt;
+    navigator.geolocation.getCurrentPosition(
+      (position) => saveCarrierLocation(fresh, position, false).then((saved) => { if (saved) say('새 위치 요청에 GPS를 자동 전송했습니다.'); }),
+      (error) => console.error('자동 위치 응답 실패', error),
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 5000 }
+    );
+  }, (error) => {
+    console.error('위치 요청 감시 실패', error);
+    say('자동 위치 응답 연결이 중단되었습니다.');
+    stopAutoLocationResponse();
+  });
+}
+
+async function refreshTrackingItem(id, renderer) {
+  try {
+    if (!await connect()) return;
+    const snapshot = await waitLimit(getDoc(doc(db, 'containerRequests', id)));
+    if (!snapshot.exists()) return say('거래 정보를 찾을 수 없습니다.');
+    const fresh = { id: snapshot.id, ...snapshot.data() };
+    state.selected = fresh;
+    renderer(fresh);
+  } catch (error) {
+    console.error(error);
+    say('최신 위치 정보를 불러오지 못했습니다.');
+  }
+}
+
+function shareCarrierLocation(item) {
+  if (!document.querySelector('#locationConsent').checked) return say('위치 공유 동의에 체크해 주세요.');
+  if (!navigator.geolocation) return say('이 브라우저는 GPS 위치 기능을 지원하지 않습니다.');
+  const button = document.querySelector('#shareLocation');
+  button.disabled = true;
+  button.textContent = 'GPS 확인 중…';
+  navigator.geolocation.getCurrentPosition(
+    (position) => saveCarrierLocation(item, position),
+    (error) => {
+      console.error(error);
+      say(error.code === 1 ? '브라우저에서 위치 권한을 허용해 주세요.' : '현재 위치를 확인하지 못했습니다.');
+      button.disabled = false;
+      button.textContent = '현재 GPS 위치 전송';
+    },
+    { enableHighAccuracy: true, timeout: 12000, maximumAge: 5000 }
+  );
+}
+
+async function saveCarrierLocation(item, position, refresh = true) {
+  const button = document.querySelector('#shareLocation');
+  const recordedAt = new Date(position.timestamp || Date.now()).toISOString();
+  try {
+    await waitLimit(updateDoc(doc(db, 'containerRequests', item.id), {
+      carrierLocation: {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy,
+        heading: Number.isFinite(position.coords.heading) ? position.coords.heading : null,
+        speed: Number.isFinite(position.coords.speed) ? position.coords.speed : null,
+        recordedAt
+      },
+      locationRequestStatus: 'responded',
+      locationSharingStatus: 'shared_once',
+      locationSharingConsentAt: new Date().toISOString(),
+      transportStatus: '운송 중'
+    }));
+    if (refresh) {
+      say('현재 GPS 위치를 필요자에게 전송했습니다.');
+      refreshTrackingItem(item.id, carrierLocationScreen);
+    }
+    return true;
+  } catch (error) {
+    console.error(error);
+    say('GPS 위치를 저장하지 못했습니다. Firebase 권한을 확인해 주세요.');
+    if (button) { button.disabled = false; button.textContent = '현재 GPS 위치 전송'; }
+    return false;
+  }
+}
+
+function destinationCoordinates(item) {
+  const latitude = Number(item.returnLat || 0);
+  const longitude = Number(item.returnLon || 0);
+  if (latitude && longitude) return { latitude, longitude };
+  const normalized = String(item.returnPlace || '').replace(/\s/g, '').toLowerCase();
+  const fallback = BUSAN_PLACES.find((place) => normalized.includes(place.name.replace(/\s/g, '').toLowerCase()));
+  return fallback ? { latitude: fallback.lat, longitude: fallback.lon } : null;
+}
+
+async function loadTmapSdk(key) {
+  if (window.Tmapv2) return;
+  const existing = document.querySelector('#tmapSdk');
+  if (existing) return new Promise((resolve, reject) => { existing.addEventListener('load', resolve, { once: true }); existing.addEventListener('error', reject, { once: true }); });
+  await new Promise((resolve, reject) => {
+    const script = document.createElement('script');
+    script.id = 'tmapSdk';
+    script.src = `https://apis.openapi.sk.com/tmap/jsv2?version=1&appKey=${encodeURIComponent(key)}`;
+    script.onload = resolve;
+    script.onerror = () => { script.remove(); reject(new Error('TMAP 지도 SDK 로드 실패')); };
+    document.head.append(script);
+  });
+}
+
+async function renderTmapRoute(item, key) {
+  const start = item.carrierLocation;
+  const end = destinationCoordinates(item);
+  if (!start || !end) return say('현재 위치 또는 목적지 좌표가 없습니다.');
+  const mapBox = document.querySelector('#tmapMap');
+  const summary = document.querySelector('#routeSummary');
+  if (!mapBox || !summary) return;
+  mapBox.innerHTML = '<div class="map-placeholder"><b>TMAP 경로 계산 중…</b></div>';
+  try {
+    const response = await waitLimit(fetch('https://apis.openapi.sk.com/tmap/routes?version=1&format=json', {
+      method: 'POST',
+      headers: { appKey: key, 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        startX: String(start.longitude), startY: String(start.latitude),
+        endX: String(end.longitude), endY: String(end.latitude),
+        startName: encodeURIComponent('차량 현재 위치'), endName: encodeURIComponent(item.returnPlace || '목적지'),
+        reqCoordType: 'WGS84GEO', resCoordType: 'WGS84GEO',
+        searchOption: 0, trafficInfo: 'Y', carType: 4, totalValue: 1
+      })
+    }), 12000);
+    if (!response.ok) throw new Error(`TMAP API 오류 ${response.status}`);
+    const route = await response.json();
+    const properties = route.features?.find((feature) => feature.properties?.totalTime)?.properties || route.features?.[0]?.properties || {};
+    const lines = (route.features || []).filter((feature) => feature.geometry?.type === 'LineString').flatMap((feature) => feature.geometry.coordinates || []);
+    await loadTmapSdk(key);
+    const tmap = window.Tmapv2;
+    if (!tmap) throw new Error('TMAP 지도 객체를 찾을 수 없습니다.');
+    mapBox.innerHTML = '';
+    const map = new tmap.Map('tmapMap', { center: new tmap.LatLng(start.latitude, start.longitude), width: '100%', height: '300px', zoom: 13 });
+    new tmap.Marker({ position: new tmap.LatLng(start.latitude, start.longitude), map, title: '차량 현재 위치' });
+    new tmap.Marker({ position: new tmap.LatLng(end.latitude, end.longitude), map, title: '목적지' });
+    if (lines.length) new tmap.Polyline({ path: lines.map(([longitude, latitude]) => new tmap.LatLng(latitude, longitude)), strokeColor: '#1265f5', strokeWeight: 6, map });
+    const seconds = Number(properties.totalTime || 0);
+    const meters = Number(properties.totalDistance || 0);
+    summary.classList.remove('hidden');
+    summary.innerHTML = `<div><span>남은 거리</span><b>${(meters / 1000).toFixed(1)}km</b></div><div><span>예상 남은 시간</span><b>${Math.max(1, Math.round(seconds / 60))}분</b></div><small>TMAP 실시간 교통정보 기반 예상치</small>`;
+  } catch (error) {
+    console.error(error);
+    mapBox.innerHTML = '<div class="map-placeholder error"><b>TMAP 경로를 불러오지 못했습니다.</b><small>appKey와 TMAP 앱의 웹 도메인 설정을 확인해 주세요.</small></div>';
+    say('TMAP 경로 조회에 실패했습니다.');
   }
 }
 
