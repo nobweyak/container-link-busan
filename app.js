@@ -165,12 +165,12 @@ async function loadForDashboard() {
 }
 
 const statusLabel = (status) => ({
-  open: '매칭 대기', approval: '승인 대기', review: '승인 요청 도착', confirmed: '매칭 확정', rejected: '매칭 반려'
+  open: '매칭 대기', approval: '승인 대기', review: '승인 요청 도착', reinspection: '재촬영 요청', confirmed: '매칭 확정', rejected: '매칭 반려'
 })[status] || '진행 중';
-const statusRank = { confirmed: 0, review: 1, approval: 2, open: 3, rejected: 4 };
+const statusRank = { confirmed: 0, review: 1, reinspection: 2, approval: 3, open: 4, rejected: 5 };
 
 function dashboardCard(item) {
-  const actionable = state.role === 'requester' && ['approval', 'review'].includes(item.status);
+  const actionable = (state.role === 'requester' && ['approval', 'review'].includes(item.status)) || (state.role === 'carrier' && item.status === 'reinspection');
   const trackable = item.status === 'confirmed';
   return `<button type="button" class="mini-card ${actionable ? 'actionable' : ''} ${trackable ? 'trackable' : ''}" data-dashboard-id="${escapeHtml(item.id)}">
     <div><b>${escapeHtml(item.size)} ${escapeHtml(item.type)}</b><span>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</span><small>${Number(item.price || 0).toLocaleString('ko-KR')}원</small></div>
@@ -198,6 +198,7 @@ async function dashboard() {
     button.onclick = () => {
       const item = visibleRows.find((row) => row.id === button.dataset.dashboardId);
       if (state.role === 'requester' && ['approval', 'review'].includes(item?.status)) requesterReview(item);
+      else if (state.role === 'carrier' && item?.status === 'reinspection') { state.selected = item; inspection(); }
       else if (item?.status === 'confirmed') transportTracking(item);
       else say(statusLabel(item?.status));
     };
@@ -356,13 +357,15 @@ async function sendApproval() {
 }
 
 function inspection() {
-  root.innerHTML = `${header('컨테이너 상태 촬영')}<section class="inspection">
+  const isReinspection = state.selected?.status === 'reinspection';
+  root.innerHTML = `${header(isReinspection ? '컨테이너 재촬영' : '컨테이너 상태 촬영')}<section class="inspection">
+    ${isReinspection ? `<div class="inspection-request"><b>재촬영 요청이 도착했습니다.</b><p>${escapeHtml(state.selected.inspectionReviewNote || '파손 의심 부위를 식별할 수 있도록 밝은 곳에서 다시 촬영해 주세요.')}</p></div>` : ''}
     <button type="button" class="capture-frame" id="capture"><span>＋</span><b>컨테이너 사진 촬영</b><small>카메라 또는 사진 보관함을 이용해 주세요.</small><img id="preview" class="hidden" alt="선택한 컨테이너 사진"></button>
     <input id="photo" type="file" accept="image/*" capture="environment" hidden>
     <p class="photo-policy">앱이 사진을 640px 이하로 압축해 전송합니다. 원본 사진은 Firestore에 저장하지 않습니다.</p>
     <button class="button main" id="sendReport">사진 및 검수 자료 전송</button>
   </section>`;
-  bindHeader(approval);
+  bindHeader(isReinspection ? dashboard : approval);
   document.querySelector('#capture').onclick = () => document.querySelector('#photo').click();
   document.querySelector('#photo').onchange = preparePhoto;
   document.querySelector('#sendReport').onclick = sendInspection;
@@ -429,7 +432,9 @@ async function sendInspection() {
       inspectionPhoto: state.photoData,
       inspectionPhotoBytes: state.photoData.length,
       inspectionPhotoName: state.photoName,
-      inspectionSentAt: new Date().toISOString()
+      inspectionSentAt: new Date().toISOString(),
+      inspectionReviewStatus: 'human_review_pending',
+      inspectionRevisionCount: Number(state.selected.inspectionRevisionCount || 0) + (state.selected.status === 'reinspection' ? 1 : 0)
     }));
     state.photoData = '';
     state.photoName = '';
@@ -445,12 +450,17 @@ async function sendInspection() {
 
 function requesterReview(item) {
   const hasPhoto = typeof item.inspectionPhoto === 'string' && item.inspectionPhoto.startsWith('data:image/');
+  const hasAiResult = typeof item.aiInspectionResult === 'string' && item.aiInspectionResult.trim();
+  const aiResult = hasAiResult ? item.aiInspectionResult.trim() : 'AI 미분석';
   root.innerHTML = `${header('검수 사진 확인')}<section class="confirm review-view">
     <div class="confirm-head"><span>운반자 승인 요청</span><b>${escapeHtml(item.size)} ${escapeHtml(item.type)}</b><small>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</small></div>
     <h2>컨테이너 검수 사진</h2>
     <img class="review-photo" id="reviewPhoto" alt="운반자가 보낸 컨테이너 검수 사진">
-    <div class="result"><span>${hasPhoto ? '✓' : '!'}</span><div><b>${hasPhoto ? '검수 자료가 도착했습니다' : '승인 요청이 도착했습니다'}</b><small>${hasPhoto ? '사진을 확인한 후 최종 결정을 내려 주세요.' : '검수 사진은 아직 없지만 요청을 수락하거나 반려할 수 있습니다.'}</small></div></div>
-    <label class="check"><input id="reviewChecked" type="checkbox"><span>요청과 상태 정보를 확인했습니다.</span></label>
+    <div class="result"><span>${hasPhoto ? '✓' : '!'}</span><div><b>${hasPhoto ? (hasAiResult ? `AI 1차 분류: ${escapeHtml(aiResult)}` : 'AI 분석 결과 없음 · 사람 확인 필요') : '검수 사진 미도착'}</b><small>${hasPhoto ? 'AI 결과가 있더라도 보조 자료이며 아래 사람 확인이 최종 기록입니다.' : '사진이 도착하기 전에는 매칭을 최종 확정할 수 없습니다.'}</small></div></div>
+    <section class="inspection-standard"><h3>판정 기준</h3><dl><div><dt>정상</dt><dd>구멍·균열·심한 변형이 없고 도어, 잠금장치, 코너캐스팅, 바닥에 운송을 방해하는 이상이 없음</dd></div><div><dt>재촬영 필요</dt><dd>사진이 흐리거나 사각지대가 있고, 경미한 찌그러짐·녹·누수 흔적의 범위를 사진만으로 확정하기 어려움</dd></div><div><dt>파손 의심</dt><dd>구멍·균열·심한 찌그러짐, 도어·잠금장치·코너캐스팅 손상, 누수 또는 바닥 파손이 식별됨</dd></div></dl></section>
+    <section class="review-decision"><h3>사람의 최종 확인</h3><label>최종 상태<select id="humanInspectionResult"><option value="">선택해 주세요</option><option value="정상">정상</option><option value="재촬영 필요">재촬영 필요</option><option value="파손 의심">파손 의심</option></select></label><label>확인 메모<textarea id="inspectionReviewNote" rows="3" placeholder="AI 결과와 다르거나 재촬영·반려하는 이유를 기록해 주세요."></textarea></label></section>
+    <label class="check"><input id="reviewChecked" type="checkbox"><span>사진과 판정 기준을 직접 확인했으며 최종 판단 책임이 사람에게 있음을 확인합니다.</span></label>
+    <button class="button ghost" id="requestRetake">사진 재촬영 요청</button>
     <button class="button ghost danger" id="rejectRequest">매칭 반려</button>
     <button class="button main" id="acceptRequest">매칭 최종 확정</button>
   </section>`;
@@ -458,20 +468,71 @@ function requesterReview(item) {
   const photo = document.querySelector('#reviewPhoto');
   if (hasPhoto) photo.src = item.inspectionPhoto;
   else { photo.replaceWith(Object.assign(document.createElement('div'), { className: 'photo-missing', textContent: '운반자가 검수 사진을 아직 전송하지 않았습니다.' })); }
-  document.querySelector('#rejectRequest').onclick = () => decideRequest(item, 'rejected');
+  document.querySelector('#requestRetake').onclick = () => requestReinspection(item, aiResult, hasAiResult);
+  document.querySelector('#rejectRequest').onclick = () => reviewDecision(item, 'rejected', aiResult, hasAiResult, hasPhoto);
   document.querySelector('#acceptRequest').onclick = () => {
-    if (!document.querySelector('#reviewChecked').checked) return say('요청과 상태 정보를 확인해 주세요.');
-    decideRequest(item, 'confirmed');
+    reviewDecision(item, 'confirmed', aiResult, hasAiResult, hasPhoto);
   };
 }
 
-async function decideRequest(item, status) {
-  const buttons = document.querySelectorAll('#rejectRequest, #acceptRequest');
+function reviewInputs(aiResult, hasAiResult) {
+  const humanResult = document.querySelector('#humanInspectionResult').value;
+  const note = document.querySelector('#inspectionReviewNote').value.trim();
+  if (!document.querySelector('#reviewChecked').checked) { say('사진과 판정 기준을 직접 확인해 주세요.'); return null; }
+  if (!humanResult) { say('사람의 최종 상태를 선택해 주세요.'); return null; }
+  if (hasAiResult && humanResult !== aiResult && !note) { say('AI 결과와 다른 판단의 근거를 메모해 주세요.'); return null; }
+  return { humanResult, note, aiResultAtDecision: aiResult, aiOverridden: Boolean(hasAiResult && humanResult !== aiResult) };
+}
+
+function reviewDecision(item, status, aiResult, hasAiResult, hasPhoto) {
+  const review = reviewInputs(aiResult, hasAiResult);
+  if (!review) return;
+  if (status === 'confirmed' && !hasPhoto) return say('검수 사진이 도착한 뒤 최종 확정할 수 있습니다.');
+  if (status === 'confirmed' && review.humanResult !== '정상') return say('최종 상태가 정상일 때만 매칭을 확정할 수 있습니다.');
+  if (status === 'rejected' && review.humanResult !== '파손 의심') return say('파손 의심을 선택한 경우 매칭을 반려할 수 있습니다.');
+  decideRequest(item, status, review);
+}
+
+async function requestReinspection(item, aiResult, hasAiResult) {
+  const review = reviewInputs(aiResult, hasAiResult);
+  if (!review) return;
+  if (review.humanResult !== '재촬영 필요') return say('최종 상태에서 재촬영 필요를 선택해 주세요.');
+  const buttons = document.querySelectorAll('#requestRetake, #rejectRequest, #acceptRequest');
+  buttons.forEach((button) => { button.disabled = true; });
+  try {
+    await waitLimit(updateDoc(doc(db, 'containerRequests', item.id), {
+      status: 'reinspection',
+      inspectionReviewStatus: 'retake_requested',
+      humanInspectionResult: review.humanResult,
+      aiInspectionResultAtDecision: review.aiResultAtDecision,
+      inspectionReviewNote: review.note,
+      aiResultOverridden: review.aiOverridden,
+      humanInspectedBy: account(),
+      humanInspectedAt: new Date().toISOString()
+    }));
+    say('운반자에게 사진 재촬영을 요청했습니다.');
+    dashboard();
+  } catch (error) {
+    console.error(error);
+    say('재촬영 요청을 저장하지 못했습니다.');
+    buttons.forEach((button) => { button.disabled = false; });
+  }
+}
+
+async function decideRequest(item, status, review) {
+  const buttons = document.querySelectorAll('#requestRetake, #rejectRequest, #acceptRequest');
   buttons.forEach((button) => { button.disabled = true; });
   try {
     await waitLimit(updateDoc(doc(db, 'containerRequests', item.id), {
       status,
       requesterDecisionAt: new Date().toISOString(),
+      inspectionReviewStatus: status === 'confirmed' ? 'human_confirmed' : 'human_rejected',
+      humanInspectionResult: review.humanResult,
+      aiInspectionResultAtDecision: review.aiResultAtDecision,
+      inspectionReviewNote: review.note,
+      aiResultOverridden: review.aiOverridden,
+      humanInspectedBy: account(),
+      humanInspectedAt: new Date().toISOString(),
       transportStatus: status === 'confirmed' ? '운송 준비' : '매칭 반려',
       ...(status === 'confirmed' ? { locationRequestStatus: 'idle', locationSharingStatus: 'not_started' } : {})
     }));
@@ -789,7 +850,7 @@ function openAddressPicker(targetId) {
     resultBox.innerHTML = '<p>도로명 주소를 검색하는 중…</p>';
     let places = [];
     try {
-      const response = await waitLimit(fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=5&accept-language=ko&q=${encodeURIComponent(keyword)}`), 7000);
+      const response = await waitLimit(fetch(`https://nominatim.openstreetmap.org/search?format=jsonv2&addressdetails=1&limit=5&accept-language=ko&countrycodes=kr&viewbox=124.5%2C39.5%2C131.0%2C33.0&bounded=1&q=${encodeURIComponent(keyword)}`), 7000);
       if (!response.ok) throw new Error('주소 검색 실패');
       places = await response.json();
     } catch (error) { console.warn(error); }
@@ -808,7 +869,7 @@ function renderAddressResults(box, places, target, close) {
     button.onclick = () => {
       const place = places[Number(button.dataset.place)];
       const row = button.closest('article');
-      row.innerHTML = `<b>${escapeHtml(place.display_name)}</b><iframe title="선택 위치 지도" src="https://www.openstreetmap.org/export/embed.html?layer=mapnik&marker=${Number(place.lat)}%2C${Number(place.lon)}"></iframe><button type="button" class="address-confirm">이 주소로 선택</button>`;
+      row.innerHTML = `<b>${escapeHtml(place.display_name)}</b><iframe title="대한민국 전도에서 선택 위치 확인" src="https://www.openstreetmap.org/export/embed.html?bbox=124.5%2C33.0%2C131.0%2C39.5&amp;layer=mapnik&amp;marker=${Number(place.lat)}%2C${Number(place.lon)}"></iframe><button type="button" class="address-confirm">이 주소로 선택</button>`;
       row.querySelector('.address-confirm').onclick = () => {
         target.value = place.display_name;
         target.dataset.latitude = place.lat;
