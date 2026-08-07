@@ -26,6 +26,18 @@ let connectionPromise = null;
 let toastTimer = null;
 
 const account = () => sessionStorage.getItem('container-link-active-account') || '';
+function accountName() {
+  const email = account();
+  try {
+    const profile = JSON.parse(localStorage.getItem(`container-link-member:${email}`) || 'null');
+    if (profile?.name?.trim()) return profile.name.trim();
+  } catch (error) { console.warn('회원 이름을 읽지 못했습니다.', error); }
+  const demoNames = {
+    'carrier-demo@containerlink.kr': '김기사',
+    'requester-demo@containerlink.kr': '이배차'
+  };
+  return demoNames[email] || email.split('@')[0] || '회원';
+}
 const escapeHtml = (value = '') => String(value).replace(/[&<>'"]/g, (character) => ({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;'
 })[character]);
@@ -64,7 +76,7 @@ function toggle(values, value) {
 
 function login() {
   root.innerHTML = `<section class="login-view">
-    <div class="logo"><img src="assets/logo.jpg" alt=""><span>컨테이너 링크</span></div>
+    <div class="logo"><img src="assets/connext-logo.png" alt="CONNEXT 로고"><span>CONNEXT</span></div>
     <div class="login-copy"><p>빈 컨테이너의 이동을 연결하다</p><h1>공컨 매칭부터<br>검수·승인까지</h1><p class="muted">부산항 공컨테이너 실시간 매칭 플랫폼</p></div>
     <label>이메일<input id="email" value="demo@containerlink.kr" autocomplete="username"></label>
     <label>비밀번호<input id="password" type="password" value="1234" autocomplete="current-password"></label>
@@ -91,7 +103,7 @@ function login() {
 
 function signup() {
   root.innerHTML = `${header('회원가입')}<section class="form-view signup-view">
-    <h1>컨테이너링크 회원가입</h1><p class="muted">시연에 사용할 정보를 입력해 주세요.</p>
+    <h1>CONNEXT 회원가입</h1><p class="muted">시연에 사용할 정보를 입력해 주세요.</p>
     <label>이름<input id="signupName" required></label>
     <label>이메일<input id="signupEmail" type="email" required></label>
     <label>비밀번호<input id="signupPassword" type="password" minlength="4" required></label>
@@ -102,12 +114,14 @@ function signup() {
   bindHeader(login);
   document.querySelector('#viewTerms').onclick = () => window.open('terms.html', 'container-link-terms', 'width=760,height=760');
   document.querySelector('#createAccount').onclick = () => {
+    const name = document.querySelector('#signupName').value.trim();
     const email = document.querySelector('#signupEmail').value.trim();
     const password = document.querySelector('#signupPassword').value;
+    if (!name) return say('이름을 입력해 주세요.');
     if (!email || password.length < 4) return say('이메일과 4자 이상의 비밀번호를 입력해 주세요.');
     if (!document.querySelector('#termsAgree').checked) return say('필수 약관에 동의해 주세요.');
     localStorage.setItem(`container-link-member:${email}`, JSON.stringify({
-      name: document.querySelector('#signupName').value.trim(), email, consentedAt: new Date().toISOString()
+      name, email, consentedAt: new Date().toISOString()
     }));
     sessionStorage.setItem('container-link-active-account', email);
     say('회원가입이 완료되었습니다.');
@@ -118,7 +132,7 @@ function signup() {
 
 function roleSelect() {
   root.innerHTML = `<section class="role-view">
-    <div class="logo"><img src="assets/logo.jpg" alt=""><span>컨테이너 링크</span></div>
+    <div class="logo"><img src="assets/connext-logo.png" alt="CONNEXT 로고"><span>CONNEXT</span></div>
     <div class="progress"><i></i><i class="on"></i><i></i></div>
     <p class="eyebrow">업무 선택</p><h1>어떤 업무를<br>하시나요?</h1>
     <button class="role-card carrier" id="carrier"><img class="role-visual" src="assets/role.png" alt="파란색 컨테이너 트럭"><b>공컨테이너 운반자</b><em>›</em></button>
@@ -148,12 +162,12 @@ async function loadForDashboard() {
 }
 
 const statusLabel = (status) => ({
-  open: '매칭 대기', approval: '검수 대기', review: '승인 요청', confirmed: '매칭 확정', rejected: '매칭 반려'
+  open: '매칭 대기', approval: '승인 대기', review: '승인 요청 도착', confirmed: '매칭 확정', rejected: '매칭 반려'
 })[status] || '진행 중';
 const statusRank = { confirmed: 0, review: 1, approval: 2, open: 3, rejected: 4 };
 
 function dashboardCard(item) {
-  const actionable = state.role === 'requester' && item.status === 'review';
+  const actionable = state.role === 'requester' && ['approval', 'review'].includes(item.status);
   return `<button type="button" class="mini-card ${actionable ? 'actionable' : ''}" data-dashboard-id="${escapeHtml(item.id)}">
     <div><b>${escapeHtml(item.size)} ${escapeHtml(item.type)}</b><span>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</span><small>${Number(item.price || 0).toLocaleString('ko-KR')}원</small></div>
     <em class="state ${escapeHtml(item.status)}">${statusLabel(item.status)}</em>
@@ -166,8 +180,8 @@ async function dashboard() {
   rows.sort((a, b) => (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9));
   const visibleRows = state.role === 'carrier' ? rows.filter((item) => item.status !== 'open') : rows;
   root.innerHTML = `<section class="dashboard">
-    <div class="top"><div><p class="eyebrow">${state.role === 'carrier' ? '공컨테이너 운반자' : '컨테이너 필요자'}</p><h1>안녕하세요.<br>${escapeHtml(account())}</h1></div><button id="switch">역할 변경</button></div>
-    <div class="hero"><span>컨테이너 링크</span><b>${visibleRows.length}<small> 건</small></b><p>${state.role === 'carrier' ? '내가 진행 중인 운송' : '내가 등록한 요청과 승인 현황'}</p></div>
+    <div class="top"><div><p class="eyebrow">${state.role === 'carrier' ? '공컨테이너 운반자' : '컨테이너 필요자'}</p><h1>안녕하세요.<br>${escapeHtml(accountName())}님</h1></div><button id="switch">역할 변경</button></div>
+    <div class="hero"><span>CONNEXT</span><b>${visibleRows.length}<small> 건</small></b><p>${state.role === 'carrier' ? '내가 진행 중인 운송' : '내가 등록한 요청과 승인 현황'}</p></div>
     <div class="section-heading"><h2>${state.role === 'carrier' ? '진행 중 운송' : '내 요청 목록'}</h2><button type="button" id="refresh">새로고침</button></div>
     <div class="mine-list">${visibleRows.length ? visibleRows.map(dashboardCard).join('') : '<div class="empty">현재 표시할 거래가 없습니다.</div>'}</div>
     <button class="action-row" id="action"><span>＋</span><div><b>${state.role === 'carrier' ? '매칭 찾기' : '공컨테이너 요청 등록'}</b></div><em>›</em></button>
@@ -178,7 +192,7 @@ async function dashboard() {
   document.querySelectorAll('[data-dashboard-id]').forEach((button) => {
     button.onclick = () => {
       const item = visibleRows.find((row) => row.id === button.dataset.dashboardId);
-      if (state.role === 'requester' && item?.status === 'review') requesterReview(item);
+      if (state.role === 'requester' && ['approval', 'review'].includes(item?.status)) requesterReview(item);
       else say(statusLabel(item?.status));
     };
   });
@@ -424,22 +438,23 @@ async function sendInspection() {
 }
 
 function requesterReview(item) {
+  const hasPhoto = typeof item.inspectionPhoto === 'string' && item.inspectionPhoto.startsWith('data:image/');
   root.innerHTML = `${header('검수 사진 확인')}<section class="confirm review-view">
     <div class="confirm-head"><span>운반자 승인 요청</span><b>${escapeHtml(item.size)} ${escapeHtml(item.type)}</b><small>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</small></div>
     <h2>컨테이너 검수 사진</h2>
     <img class="review-photo" id="reviewPhoto" alt="운반자가 보낸 컨테이너 검수 사진">
-    <div class="result"><span>✓</span><div><b>검수 자료가 도착했습니다</b><small>사진을 확인한 후 최종 결정을 내려 주세요.</small></div></div>
-    <label class="check"><input id="reviewChecked" type="checkbox"><span>사진과 상태 정보를 확인했습니다.</span></label>
+    <div class="result"><span>${hasPhoto ? '✓' : '!'}</span><div><b>${hasPhoto ? '검수 자료가 도착했습니다' : '승인 요청이 도착했습니다'}</b><small>${hasPhoto ? '사진을 확인한 후 최종 결정을 내려 주세요.' : '검수 사진은 아직 없지만 요청을 수락하거나 반려할 수 있습니다.'}</small></div></div>
+    <label class="check"><input id="reviewChecked" type="checkbox"><span>요청과 상태 정보를 확인했습니다.</span></label>
     <button class="button ghost danger" id="rejectRequest">매칭 반려</button>
     <button class="button main" id="acceptRequest">매칭 최종 확정</button>
   </section>`;
   bindHeader(dashboard);
   const photo = document.querySelector('#reviewPhoto');
-  if (typeof item.inspectionPhoto === 'string' && item.inspectionPhoto.startsWith('data:image/')) photo.src = item.inspectionPhoto;
-  else { photo.replaceWith(Object.assign(document.createElement('div'), { className: 'photo-missing', textContent: '검수 사진을 불러올 수 없습니다.' })); }
+  if (hasPhoto) photo.src = item.inspectionPhoto;
+  else { photo.replaceWith(Object.assign(document.createElement('div'), { className: 'photo-missing', textContent: '운반자가 검수 사진을 아직 전송하지 않았습니다.' })); }
   document.querySelector('#rejectRequest').onclick = () => decideRequest(item, 'rejected');
   document.querySelector('#acceptRequest').onclick = () => {
-    if (!document.querySelector('#reviewChecked').checked) return say('사진과 상태 정보를 확인해 주세요.');
+    if (!document.querySelector('#reviewChecked').checked) return say('요청과 상태 정보를 확인해 주세요.');
     decideRequest(item, 'confirmed');
   };
 }
