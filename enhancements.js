@@ -17,7 +17,7 @@ function rebuildRoleCards() {
     if (card.dataset.rebuilt) return;
     card.dataset.rebuilt = 'true';
     const title = card.classList.contains('carrier') ? '공컨테이너 운반자' : '컨테이너가 필요해요';
-    card.innerHTML = `<span class="role-art" aria-hidden="true"></span><b>${title}</b><em aria-hidden="true">›</em>`;
+    card.innerHTML = `<img class="role-visual" src="assets/role.png" alt=""><b>${title}</b><em aria-hidden="true">›</em>`;
   });
 }
 
