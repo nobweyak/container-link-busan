@@ -39,7 +39,6 @@ function start(){
  if(subscribed)return;
  onAuthStateChanged(auth,user=>{if(!user||subscribed)return;subscribed=true;onSnapshot(collection(db,'containerRequests'),snapshot=>{latest=snapshot.docs.map(x=>Object.assign({id:x.id},x.data()));draw();},error=>console.error('승인 요청 조회 실패',error));});
 }
-document.addEventListener('click',event=>{const card=event.target.closest?.('.match-card[data-id]');if(card)localStorage.setItem('container-link-selected-request',card.dataset.id)},true);
+document.addEventListener('click',event=>{const card=event.target.closest?.('.match-card[data-id]');if(card)localStorage.setItem('container-link-selected-request',card.dataset.id);if(event.target.closest?.('#requester,#home'))setTimeout(draw,500)},true);
 document.addEventListener('click',event=>{if(!event.target.closest?.('#sendReport'))return;const file=document.querySelector('#photo')?.files?.[0];const id=localStorage.getItem('container-link-selected-request');if(!file||!id)return;const reader=new FileReader();reader.onload=()=>updateDoc(doc(db,'containerRequests',id),{status:'review',inspectionPhoto:reader.result,inspectionSentAt:new Date().toISOString()}).catch(error=>console.error('검수 사진 저장 실패',error));reader.readAsDataURL(file)},true);
-new MutationObserver(draw).observe(document.documentElement,{childList:true,subtree:true});
 start();
