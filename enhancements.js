@@ -12,6 +12,15 @@ function removeRoleDescriptions() {
   document.querySelectorAll('.role-card small').forEach((description) => description.remove());
 }
 
+function rebuildRoleCards() {
+  document.querySelectorAll('.role-card').forEach((card) => {
+    if (card.dataset.rebuilt) return;
+    card.dataset.rebuilt = 'true';
+    const title = card.classList.contains('carrier') ? '공컨테이너 운반자' : '컨테이너가 필요해요';
+    card.innerHTML = `<span class="role-icon" aria-hidden="true"></span><b>${title}</b><em aria-hidden="true">›</em>`;
+  });
+}
+
 function installDemoAccounts() {
   const view = document.querySelector('.login-view');
   if (!view || view.querySelector('.demo-accounts')) return;
@@ -65,6 +74,7 @@ function replaceQuantitySelect() {
 
 function enhance() {
   installLogo();
+  rebuildRoleCards();
   removeRoleDescriptions();
   installDemoAccounts();
   applyDemoRole();
