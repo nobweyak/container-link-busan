@@ -9,16 +9,17 @@ const firebase = initializeApp(firebaseConfig);
 const auth = getAuth(firebase);
 const db = getFirestore(firebase);
 const state = { user: null, role: '', types: ['DRY'], sizes: ['20FT', '40FT'], condition: '정상', selected: null, photo: null, hidden: new Set() };
+let connectionPromise=null;
 
 const say = (message) => { toast.textContent = message; toast.classList.add('show'); setTimeout(() => toast.classList.remove('show'), 2400); };
-async function connect() { if (state.user) return true; try { state.user = (await signInAnonymously(auth)).user; return true; } catch { say('Firebase 연결에 실패했습니다.'); return false; } }
+async function connect() { if (state.user) return true; if(connectionPromise)return connectionPromise; connectionPromise=signInAnonymously(auth).then(result=>{state.user=result.user;return true}).catch(error=>{console.error(error);say('Firebase 연결에 실패했습니다.');return false}).finally(()=>{connectionPromise=null});return connectionPromise; }
 const header = (title, back) => `<header><button id="back">‹</button><b>${title}</b><button id="home">⌂</button></header>`;
 function bindHeader(back) { document.querySelector('#back').onclick = back; document.querySelector('#home').onclick = dashboard; }
 function toggle(values, value) { return values.includes(value) ? (values.length > 1 ? values.filter((item) => item !== value) : values) : [...values, value]; }
 
 function login() {
   root.innerHTML = `<section class="login-view"><div class="logo"><span>▣</span> CONTAINER LINK</div><div class="login-copy"><p>빈 컨테이너의 이동을 연결하다</p><h1>공컨 매칭부터<br>검수·승인까지</h1><p class="muted">부산항 공컨테이너 실시간 매칭 플랫폼</p></div><label>이메일<input value="demo@containerlink.kr" aria-label="이메일"></label><label>비밀번호<input type="password" value="1234" aria-label="비밀번호"></label><button class="button main" id="signin">시작하기</button><small>시연용 앱입니다. 실제 개인정보는 입력하지 마세요.</small></section>`;
-  document.querySelector('#signin').onclick = async () => { sessionStorage.setItem('container-link-active-account', document.querySelector('input').value.trim()); if (await connect()) roleSelect(); };
+  document.querySelector('#signin').onclick = () => { sessionStorage.setItem('container-link-active-account', document.querySelector('input').value.trim()); roleSelect(); connect(); };
   const signupButton=document.createElement('button');signupButton.type='button';signupButton.className='button ghost signup-link';signupButton.textContent='회원가입';document.querySelector('#signin').after(signupButton);signupButton.onclick=signup;
 }
 
