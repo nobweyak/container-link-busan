@@ -1,7 +1,9 @@
 import { initializeApp,getApps } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
+import { getAuth,onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
 import { getFirestore,collection,getDocs,updateDoc,doc,onSnapshot } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
 import { firebaseConfig } from './firebase-config.js';
 const db=getFirestore(getApps()[0]||initializeApp(firebaseConfig));
+const auth=getAuth(getApps()[0]);
 let latest=[];
 let subscribed=false;
 const activeEmail=()=>sessionStorage.getItem('container-link-active-account')||'';
@@ -30,8 +32,8 @@ async function decide(id,status){
  catch(error){console.error(error);alert('처리에 실패했습니다. Firebase 연결을 확인해 주세요.');}
 }
 function start(){
- if(subscribed)return;subscribed=true;
- onSnapshot(collection(db,'containerRequests'),snapshot=>{latest=snapshot.docs.map(x=>Object.assign({id:x.id},x.data()));draw();},error=>console.error('승인 요청 조회 실패',error));
+ if(subscribed)return;
+ onAuthStateChanged(auth,user=>{if(!user||subscribed)return;subscribed=true;onSnapshot(collection(db,'containerRequests'),snapshot=>{latest=snapshot.docs.map(x=>Object.assign({id:x.id},x.data()));draw();},error=>console.error('승인 요청 조회 실패',error));});
 }
 document.addEventListener('click',event=>{const card=event.target.closest?.('.match-card[data-id]');if(card)localStorage.setItem('container-link-selected-request',card.dataset.id)},true);
 document.addEventListener('click',event=>{if(!event.target.closest?.('#sendReport'))return;const file=document.querySelector('#photo')?.files?.[0];const id=localStorage.getItem('container-link-selected-request');if(!file||!id)return;const reader=new FileReader();reader.onload=()=>updateDoc(doc(db,'containerRequests',id),{status:'review',inspectionPhoto:reader.result,inspectionSentAt:new Date().toISOString()}).catch(error=>console.error('검수 사진 저장 실패',error));reader.readAsDataURL(file)},true);
