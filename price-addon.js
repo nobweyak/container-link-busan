@@ -99,6 +99,7 @@ document.addEventListener('submit', async (event) => {
   try {
     await addDoc(collection(db, 'containerRequests'), {
       ownerId: await userId(), type, size, condition: '미검수',
+      requesterAccount: sessionStorage.getItem('container-link-active-account') || 'requester-demo@containerlink.kr',
       pickup: form.querySelector('#pickup').value.trim(),
       returnPlace: form.querySelector('#returnPlace').value.trim(),
       time: form.querySelector('#time').value,

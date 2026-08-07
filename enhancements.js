@@ -25,6 +25,7 @@ function installDemoAccounts() {
       if (inputs.length >= 2) {
         inputs[0].value = demoRole === 'carrier' ? 'carrier-demo@containerlink.kr' : 'requester-demo@containerlink.kr';
         inputs[1].value = '1234';
+        sessionStorage.setItem('container-link-active-account', inputs[0].value);
       }
       view.querySelector('#signin')?.click();
     };
@@ -64,6 +65,13 @@ function enhance() {
   applyDemoRole();
   replaceQuantitySelect();
 }
+
+document.addEventListener('click', (event) => {
+  if (event.target.closest?.('#signin')) {
+    const email = document.querySelector('.login-view input')?.value.trim();
+    if (email) sessionStorage.setItem('container-link-active-account', email);
+  }
+}, true);
 
 new MutationObserver(enhance).observe(document.documentElement, { childList: true, subtree: true });
 enhance();

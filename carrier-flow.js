@@ -1,6 +1,6 @@
-const carrierTripsKey = 'container-link-carrier-trips';
-const readTrips = () => JSON.parse(localStorage.getItem(carrierTripsKey) || '[]');
-const writeTrips = (trips) => localStorage.setItem(carrierTripsKey, JSON.stringify(trips));
+const carrierTripsKey = () => `container-link-carrier-trips:${sessionStorage.getItem('container-link-active-account') || 'carrier-demo@containerlink.kr'}`;
+const readTrips = () => JSON.parse(localStorage.getItem(carrierTripsKey()) || '[]');
+const writeTrips = (trips) => localStorage.setItem(carrierTripsKey(), JSON.stringify(trips));
 
 function rememberCarrierTrip(card) {
   if (localStorage.getItem('container-link-role') !== 'carrier' || !card) return;
@@ -8,7 +8,7 @@ function rememberCarrierTrip(card) {
   const meta = card.querySelector('small')?.textContent.trim() || '';
   const trips = readTrips();
   if (trips.some((trip) => trip.route === route)) return;
-  trips.unshift({ route, meta, status: '선사 승인 요청 전' });
+  trips.unshift({ requestId: card.dataset.id, route, meta, status: '선사 승인 요청 전' });
   writeTrips(trips);
 }
 
