@@ -8,6 +8,10 @@ function installLogo() {
   }
 }
 
+function removeRoleDescriptions() {
+  document.querySelectorAll('.role-card small').forEach((description) => description.remove());
+}
+
 function installDemoAccounts() {
   const view = document.querySelector('.login-view');
   if (!view || view.querySelector('.demo-accounts')) return;
@@ -61,6 +65,7 @@ function replaceQuantitySelect() {
 
 function enhance() {
   installLogo();
+  removeRoleDescriptions();
   installDemoAccounts();
   applyDemoRole();
   replaceQuantitySelect();
