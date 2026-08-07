@@ -31,6 +31,20 @@ function roleSelect() {
   document.querySelector('#requester').onclick = () => { if(sessionStorage.getItem('container-link-active-account')==='demo@containerlink.kr')sessionStorage.setItem('container-link-active-account','requester-demo@containerlink.kr'); state.role = 'requester'; localStorage.setItem('container-link-role', 'requester'); dashboard(); };
 }
 
+function chooseRole(role){
+  if(role==='requester'&&sessionStorage.getItem('container-link-active-account')==='demo@containerlink.kr')sessionStorage.setItem('container-link-active-account','requester-demo@containerlink.kr');
+  state.role=role;
+  localStorage.setItem('container-link-role',role);
+  dashboard();
+}
+document.addEventListener('click',event=>{
+  const choice=event.target.closest?.('#carrier,#requester');
+  if(!choice)return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  chooseRole(choice.id);
+},true);
+
 async function mine() { if (!await connect()) return []; try { const activeAccount=sessionStorage.getItem('container-link-active-account')||''; const rows = await getDocs(collection(db, 'containerRequests')); return rows.docs.map((row) => ({ id: row.id, ...row.data() })).filter((item)=>item.requesterAccount===activeAccount); } catch { return []; } }
 function stateName(status) { return ({ open: '매칭 대기', approval: '승인 대기', confirmed: '매칭 확정', rejected: '거절됨' })[status] || '진행 중'; }
 function requestCard(item) { return `<article class="mini-card"><div><b>${item.size || ''} ${item.type || ''}</b><span>${item.pickup || ''} → ${item.returnPlace || ''}</span></div><em class="state ${item.status || 'open'}">${stateName(item.status)}</em></article>`; }
