@@ -15,7 +15,7 @@ async function sendApprovalRequest() {
   await updateDoc(doc(db, 'containerRequests', trip.requestId), {
     status: 'approval', carrierAccount: activeAccount(), approvalRequestedAt: serverTimestamp()
   });
-  trip.status = '필요자 승인 대기';
+  trip.status = '공컨테이너 수요자 승인 대기';
   localStorage.setItem(`container-link-carrier-trips:${activeAccount()}`, JSON.stringify(trips));
 }
 

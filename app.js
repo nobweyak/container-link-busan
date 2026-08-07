@@ -84,7 +84,7 @@ function login() {
     <label>비밀번호<input id="password" type="password" value="1234" autocomplete="current-password"></label>
     <section class="demo-accounts"><b>시연용 테스트 계정</b>
       <button type="button" data-account="carrier-demo@containerlink.kr"><span>공컨 운반자</span><small>carrier-demo@containerlink.kr</small></button>
-      <button type="button" data-account="requester-demo@containerlink.kr"><span>컨테이너 필요자</span><small>requester-demo@containerlink.kr</small></button>
+      <button type="button" data-account="requester-demo@containerlink.kr"><span>공컨테이너 수요자</span><small>requester-demo@containerlink.kr</small></button>
     </section>
     <button class="button main" id="signin">로그인</button>
     <button class="button ghost signup-link" id="signup">회원가입</button>
@@ -138,7 +138,7 @@ function roleSelect() {
     <div class="progress"><i></i><i class="on"></i><i></i></div>
     <p class="eyebrow">업무 선택</p><h1>어떤 업무를<br>하시나요?</h1>
     <button class="role-card carrier" id="carrier"><img class="role-visual" src="assets/role.png" alt="파란색 컨테이너 트럭"><b>공컨테이너 운반자</b><em>›</em></button>
-    <button class="role-card requester" id="requester"><img class="role-visual" src="assets/role.png" alt="주황색 컨테이너"><b>컨테이너가 필요해요</b><em>›</em></button>
+    <button class="role-card requester" id="requester"><img class="role-visual" src="assets/role.png" alt="주황색 컨테이너"><b>공컨테이너 수요자</b><em>›</em></button>
   </section>`;
   document.querySelector('#carrier').onclick = () => chooseRole('carrier');
   document.querySelector('#requester').onclick = () => chooseRole('requester');
@@ -184,7 +184,7 @@ async function dashboard() {
   rows.sort((a, b) => (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9));
   const visibleRows = state.role === 'carrier' ? rows.filter((item) => item.status !== 'open') : rows;
   root.innerHTML = `<section class="dashboard">
-    <div class="top"><div><p class="eyebrow">${state.role === 'carrier' ? '공컨테이너 운반자' : '컨테이너 필요자'}</p><h1>안녕하세요.<br>${escapeHtml(accountName())}님</h1></div><button id="switch">역할 변경</button></div>
+    <div class="top"><div><p class="eyebrow">${state.role === 'carrier' ? '공컨테이너 운반자' : '공컨테이너 수요자'}</p><h1>안녕하세요.<br>${escapeHtml(accountName())}님</h1></div><button id="switch">역할 변경</button></div>
     <div class="hero"><span>CONNEXT</span><b>${visibleRows.length}<small> 건</small></b><p>${state.role === 'carrier' ? '내가 진행 중인 운송' : '내가 등록한 요청과 승인 현황'}</p></div>
     <div class="section-heading"><h2>${state.role === 'carrier' ? '진행 중 운송' : '내 요청 목록'}</h2><button type="button" id="refresh">새로고침</button></div>
     <div class="mine-list">${visibleRows.length ? visibleRows.map(dashboardCard).join('') : '<div class="empty">현재 표시할 거래가 없습니다.</div>'}</div>
@@ -434,7 +434,7 @@ async function sendInspection() {
     }));
     state.photoData = '';
     state.photoName = '';
-    say('검수 자료가 해당 컨테이너 필요자에게 전송되었습니다.');
+    say('검수 자료가 해당 공컨테이너 수요자에게 전송되었습니다.');
     dashboard();
   } catch (error) {
     console.error(error);
@@ -525,7 +525,7 @@ function requesterLocationScreen(item) {
     <button type="button" class="button main" id="requestLocation">운반자에게 최신 위치 요청</button>
     <button type="button" class="button ghost" id="refreshLocation">위치 정보 새로고침</button>
     <details class="tmap-settings"><summary>TMAP API 키 설정</summary><p>키는 이 브라우저에만 저장되며 GitHub와 Firebase에는 전송하지 않습니다.</p><label>TMAP appKey<input id="tmapKey" type="password" autocomplete="off" placeholder="발급받은 appKey 입력"></label><button type="button" class="button ghost" id="saveTmapKey">이 브라우저에 키 저장</button></details>
-    <p class="location-notice">차량 위치는 확정된 이 거래의 필요자에게만 표시됩니다. 위치 요청만으로 운반자의 GPS에 강제 접근할 수 없으며 운반자의 동의와 브라우저 위치 권한이 필요합니다.</p>
+    <p class="location-notice">차량 위치는 확정된 이 거래의 공컨테이너 수요자에게만 표시됩니다. 위치 요청만으로 운반자의 GPS에 강제 접근할 수 없으며 운반자의 동의와 브라우저 위치 권한이 필요합니다.</p>
   </section>`;
   bindHeader(dashboard);
   const savedKey = localStorage.getItem('connext-tmap-app-key') || '';
@@ -567,11 +567,11 @@ function carrierLocationScreen(item) {
   root.innerHTML = `${header('차량 GPS 공유')}<section class="tracking-view carrier-tracking">
     <div class="tracking-head"><span>${requested ? '최신 위치 요청 도착' : '확정 운송'}</span><b>${escapeHtml(item.pickup)} → ${escapeHtml(item.returnPlace)}</b><small>${escapeHtml(item.size)} ${escapeHtml(item.type)}</small></div>
     ${locationSummary(item)}
-    <div class="consent-box"><b>정밀 위치정보 공유 동의</b><p>현재 GPS 좌표와 정확도, 전송 시각이 이 거래의 컨테이너 필요자에게 제공됩니다. 다른 사용자에게는 표시하지 않습니다.</p><label class="check"><input id="locationConsent" type="checkbox"><span>현재 운송 위치 공유에 동의합니다.</span></label></div>
+    <div class="consent-box"><b>정밀 위치정보 공유 동의</b><p>현재 GPS 좌표와 정확도, 전송 시각이 이 거래의 공컨테이너 수요자에게 제공됩니다. 다른 사용자에게는 표시하지 않습니다.</p><label class="check"><input id="locationConsent" type="checkbox"><span>현재 운송 위치 공유에 동의합니다.</span></label></div>
     <button type="button" class="button main" id="shareLocation">현재 GPS 위치 전송</button>
     <button type="button" class="button ghost" id="enableAutoLocation">위치 요청 자동 응답 시작</button>
     <button type="button" class="button ghost" id="refreshCarrierRequest">위치 요청 확인</button>
-    <p class="location-notice">자동 응답은 이 화면이 열려 있는 동안에만 작동하며, 필요자가 새 위치를 요청할 때에만 GPS를 읽습니다. 화면을 닫으면 즉시 중단됩니다.</p>
+    <p class="location-notice">자동 응답은 이 화면이 열려 있는 동안에만 작동하며, 공컨테이너 수요자가 새 위치를 요청할 때에만 GPS를 읽습니다. 화면을 닫으면 즉시 중단됩니다.</p>
   </section>`;
   bindHeader(dashboard);
   document.querySelector('#shareLocation').onclick = () => shareCarrierLocation(item);
@@ -680,7 +680,7 @@ async function saveCarrierLocation(item, position, refresh = true) {
       transportStatus: '운송 중'
     }));
     if (refresh) {
-      say('현재 GPS 위치를 필요자에게 전송했습니다.');
+      say('현재 GPS 위치를 공컨테이너 수요자에게 전송했습니다.');
       refreshTrackingItem(item.id, carrierLocationScreen);
     }
     return true;

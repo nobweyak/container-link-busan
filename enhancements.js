@@ -16,7 +16,7 @@ function rebuildRoleCards() {
   document.querySelectorAll('.role-card').forEach((card) => {
     if (card.dataset.rebuilt) return;
     card.dataset.rebuilt = 'true';
-    const title = card.classList.contains('carrier') ? '공컨테이너 운반자' : '컨테이너가 필요해요';
+    const title = card.classList.contains('carrier') ? '공컨테이너 운반자' : '공컨테이너 수요자';
     card.innerHTML = `<img class="role-visual" src="assets/role.png" alt=""><b>${title}</b><em aria-hidden="true">›</em>`;
   });
 }
@@ -29,7 +29,7 @@ function installDemoAccounts() {
   box.innerHTML = `
     <b>시연용 테스트 계정</b>
     <button type="button" data-demo-role="carrier"><span>공컨 운반자</span><small>carrier-demo@containerlink.kr · 1234</small></button>
-    <button type="button" data-demo-role="requester"><span>컨테이너 필요자</span><small>requester-demo@containerlink.kr · 1234</small></button>`;
+    <button type="button" data-demo-role="requester"><span>공컨테이너 수요자</span><small>requester-demo@containerlink.kr · 1234</small></button>`;
   view.querySelector('#signin')?.before(box);
   box.querySelectorAll('[data-demo-role]').forEach((button) => {
     button.onclick = () => {

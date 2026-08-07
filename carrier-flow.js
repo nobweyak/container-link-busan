@@ -29,7 +29,7 @@ function replaceCarrierConfirmation() {
   confirm.dataset.carrierView = 'true';
   const trips = readTrips();
   if (trips[0]) { trips[0].status = '검수 자료 전송 완료'; writeTrips(trips); }
-  confirm.innerHTML = `<div class="carrier-complete"><span>✓</span><h2>검수 자료를 전송했습니다</h2><p>필요자가 사진과 AI 상태 정보를 확인하면 운송이 최종 확정됩니다.</p><div><b>현재 상태</b><em>필요자 확인 대기</em></div><button class="button main" id="carrierHome">진행 중 운송 보기</button></div>`;
+  confirm.innerHTML = `<div class="carrier-complete"><span>✓</span><h2>검수 자료를 전송했습니다</h2><p>공컨테이너 수요자가 사진과 AI 상태 정보를 확인하면 운송이 최종 확정됩니다.</p><div><b>현재 상태</b><em>공컨테이너 수요자 확인 대기</em></div><button class="button main" id="carrierHome">진행 중 운송 보기</button></div>`;
   confirm.querySelector('#carrierHome').onclick = () => document.querySelector('#home')?.click();
 }
 

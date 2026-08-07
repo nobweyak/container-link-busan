@@ -47,7 +47,7 @@ function installAllMyRequests() {
   const dashboard = document.querySelector('.dashboard');
   const list = dashboard?.querySelector('.mine-list');
   if (!list || list.dataset.allLoaded) return;
-  const isRequester = dashboard.textContent.includes('컨테이너 필요자');
+  const isRequester = dashboard.textContent.includes('공컨테이너 수요자');
   if (!isRequester) return;
   list.dataset.allLoaded = 'true';
   const account = sessionStorage.getItem('container-link-active-account') || '';
